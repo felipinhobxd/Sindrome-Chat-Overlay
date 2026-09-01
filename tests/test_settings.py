@@ -17,6 +17,7 @@ class SettingsStoreTests(unittest.TestCase):
                 language="pt-BR",
                 twitch_channel="@SindromeGames",
                 youtube_input="@SindromeGames",
+                youtube_api_key="secret-data-api-key",
                 font_size=99,
                 max_messages=1,
             )
@@ -30,6 +31,11 @@ class SettingsStoreTests(unittest.TestCase):
             )
             self.assertEqual(loaded.font_size, 30)
             self.assertEqual(loaded.max_messages, 20)
+            self.assertEqual(loaded.youtube_api_key, "secret-data-api-key")
+            saved_payload = json.loads(path.read_text(encoding="utf-8"))
+            if __import__("os").name == "nt":
+                self.assertTrue(saved_payload["youtube_api_key"].startswith("dpapi:"))
+                self.assertNotIn("secret-data-api-key", path.read_text(encoding="utf-8"))
 
     def test_unknown_fields_are_ignored(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

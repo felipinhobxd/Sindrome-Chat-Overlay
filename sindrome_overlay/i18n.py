@@ -31,11 +31,17 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "show_key": "Show key",
         "channel": "Channel:",
         "channel_or_live": "Channel or live stream:",
-        "api_key": "API key:",
+        "youtube_data_api_key": "YouTube Data API key (optional):",
+        "youtube_source_note": (
+            "The channel/live URL is used to discover the active Video ID automatically. "
+            "With an API key, the official API then discovers the Live Chat ID; you do not "
+            "need to enter either ID."
+        ),
         "youtube_key_note": (
-            "Without a key, automatic mode reads the public chat. Your own YouTube Data API "
-            "key is optional and enables official API mode. Never embed a personal key in an "
-            ".exe that you share."
+            "Optional: enables the official low-latency streamList connection. This is a "
+            "YouTube Data API v3 key, not a Stream Key. Stream Keys are never used to read "
+            "chat. On Windows, the value is protected for your account with DPAPI and is "
+            "never written to logs."
         ),
         "always_on_top": "Always on top",
         "start_click_through": "Start with mouse clicks locked",
@@ -72,6 +78,11 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "locked_message": (
             "Press Ctrl + Shift + O or use the system tray icon to unlock mouse clicks."
         ),
+        "hotkey_unavailable_title": "Global shortcut unavailable",
+        "hotkey_unavailable_message": (
+            "Another program is using Ctrl + Shift + O. The shortcut will work only while "
+            "Sindrome Chat Overlay is active until the conflict is removed."
+        ),
         "connecting": "Connecting…",
         "reconnecting": "Reconnecting in {seconds}s",
         "disconnected": "Disconnected",
@@ -81,7 +92,12 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "waiting_next_live": "Waiting for the next live stream",
         "rate_limited": "YouTube limited access; retrying in 60s",
         "live_auto": "Live · automatic mode",
-        "live_official": "Live · official API",
+        "live_official_streaming": "Live · official low-latency stream",
+        "live_official_polling": "Live · official polling fallback",
+        "youtube_chat_disabled": "live chat is disabled; checking again in 60s",
+        "youtube_chat_invalid": "invalid live chat; checking for a new live stream",
+        "youtube_api_key_rejected": "YouTube Data API key rejected; retrying in 60s",
+        "youtube_chat_unavailable": "live chat unavailable; checking again in 30s",
         "unexpected_error": (
             "The application encountered an unexpected error.\n\n"
             "Close and reopen it. The overlay.log file may help diagnose the problem."
@@ -126,11 +142,17 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "show_key": "Mostrar chave",
         "channel": "Canal:",
         "channel_or_live": "Canal ou live:",
-        "api_key": "Chave da API:",
+        "youtube_data_api_key": "Chave da YouTube Data API (opcional):",
+        "youtube_source_note": (
+            "O link do canal/live descobre automaticamente o Video ID da live ativa. Com uma "
+            "chave da API, a API oficial descobre o Live Chat ID; você não precisa informar "
+            "nenhum dos IDs."
+        ),
         "youtube_key_note": (
-            "Sem chave, o modo automático lê o chat público. Uma chave própria da YouTube "
-            "Data API é opcional e ativa o modo oficial. Nunca coloque uma chave pessoal "
-            "dentro de um .exe que será compartilhado."
+            "Opcional: ativa a conexão oficial streamList de baixa latência. Esta é uma chave "
+            "da YouTube Data API v3, não uma Chave de Transmissão (Stream Key). Stream Key "
+            "nunca é usada para ler o chat. No Windows, o valor é protegido para sua conta "
+            "com DPAPI e nunca é gravado nos logs."
         ),
         "always_on_top": "Manter sempre no topo",
         "start_click_through": "Iniciar com os cliques bloqueados",
@@ -165,6 +187,11 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "quit": "Sair",
         "locked_title": "Overlay bloqueado",
         "locked_message": ("Use Ctrl + Shift + O ou o ícone ao lado do relógio para desbloquear."),
+        "hotkey_unavailable_title": "Atalho global indisponível",
+        "hotkey_unavailable_message": (
+            "Outro programa está usando Ctrl + Shift + O. Até o conflito ser removido, o "
+            "atalho funcionará somente quando o Sindrome Chat Overlay estiver ativo."
+        ),
         "connecting": "Conectando…",
         "reconnecting": "Reconectando em {seconds}s",
         "disconnected": "Desconectado",
@@ -174,7 +201,12 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "waiting_next_live": "Aguardando a próxima live",
         "rate_limited": "YouTube limitou o acesso; tentando em 60s",
         "live_auto": "Ao vivo · modo automático",
-        "live_official": "Ao vivo · API oficial",
+        "live_official_streaming": "Ao vivo · stream oficial de baixa latência",
+        "live_official_polling": "Ao vivo · polling oficial de contingência",
+        "youtube_chat_disabled": "chat desativado; verificando novamente em 60s",
+        "youtube_chat_invalid": "chat inválido; procurando uma nova live",
+        "youtube_api_key_rejected": "chave da YouTube Data API recusada; nova tentativa em 60s",
+        "youtube_chat_unavailable": "chat indisponível; verificando novamente em 30s",
         "unexpected_error": (
             "O aplicativo encontrou um erro inesperado.\n\n"
             "Feche e abra novamente. O arquivo overlay.log pode ajudar no diagnóstico."

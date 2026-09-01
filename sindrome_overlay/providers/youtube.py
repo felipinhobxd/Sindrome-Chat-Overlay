@@ -10,12 +10,14 @@ from queue import Queue
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+import grpc
 import requests
 
 from ..events import ProviderEvent
 from ..i18n import normalize_language, tr
 from ..models import ChatMessage, clean_text, parse_timestamp_usec
 from ..url_utils import normalize_youtube_input, youtube_video_id
+from ..youtube_grpc import stream_list_pb2, stream_list_pb2_grpc
 from .base import BaseProvider
 
 _VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
@@ -38,6 +40,26 @@ class ChatUnavailable(RuntimeError):
     pass
 
 
+class ChatDisabled(ChatUnavailable):
+    pass
+
+
+class LiveChatEnded(StreamOffline):
+    pass
+
+
+class InvalidLiveChat(ChatUnavailable):
+    pass
+
+
+class ApiKeyRejected(ChatUnavailable):
+    pass
+
+
+class StreamingTransportUnavailable(ConnectionError):
+    pass
+
+
 class RateLimited(RuntimeError):
     pass
 
@@ -47,7 +69,7 @@ class YouTubeBootstrap:
     video_id: str
     video_url: str
     continuation: str
-    api_key: str
+    innertube_key: str
     client_name: str
     client_name_numeric: str
     client_version: str
@@ -314,6 +336,80 @@ def official_message_from_item(item: dict[str, Any], language: str = "en") -> Ch
     )
 
 
+def official_message_from_stream(item: Any, language: str = "en") -> ChatMessage | None:
+    snippet = item.snippet
+    author_details = item.author_details
+    event_type = int(snippet.type)
+    if event_type in {
+        stream_list_pb2.LiveChatMessageSnippet.TOMBSTONE,
+        stream_list_pb2.LiveChatMessageSnippet.CHAT_ENDED_EVENT,
+        stream_list_pb2.LiveChatMessageSnippet.USER_BANNED_EVENT,
+    }:
+        return None
+
+    text = str(snippet.display_message or "")
+    amount = ""
+    kind = "message"
+    if event_type == stream_list_pb2.LiveChatMessageSnippet.TEXT_MESSAGE_EVENT:
+        text = str(snippet.text_message_details.message_text or text)
+    elif event_type == stream_list_pb2.LiveChatMessageSnippet.SUPER_CHAT_EVENT:
+        text = str(snippet.super_chat_details.user_comment or text or tr(language, "super_chat"))
+        amount = str(snippet.super_chat_details.amount_display_string or "")
+        kind = "paid"
+    elif event_type == stream_list_pb2.LiveChatMessageSnippet.SUPER_STICKER_EVENT:
+        text = str(
+            text
+            or snippet.super_sticker_details.super_sticker_metadata.alt_text
+            or tr(language, "super_sticker")
+        )
+        amount = str(snippet.super_sticker_details.amount_display_string or "")
+        kind = "paid"
+    elif event_type in {
+        stream_list_pb2.LiveChatMessageSnippet.NEW_SPONSOR_EVENT,
+        stream_list_pb2.LiveChatMessageSnippet.MEMBER_MILESTONE_CHAT_EVENT,
+        stream_list_pb2.LiveChatMessageSnippet.MEMBERSHIP_GIFTING_EVENT,
+        stream_list_pb2.LiveChatMessageSnippet.GIFT_MEMBERSHIP_RECEIVED_EVENT,
+    }:
+        if event_type == stream_list_pb2.LiveChatMessageSnippet.MEMBER_MILESTONE_CHAT_EVENT:
+            text = str(snippet.member_milestone_chat_details.user_comment or text)
+        text = text or tr(language, "member_event")
+        kind = "membership"
+    elif event_type == stream_list_pb2.LiveChatMessageSnippet.GIFT_EVENT:
+        text = str(snippet.gift_details.alt_text or snippet.gift_details.gift_name or text)
+        kind = "event"
+    elif not text:
+        return None
+
+    badges: list[str] = []
+    if author_details.is_chat_owner:
+        badges.append("OWNER")
+    if author_details.is_chat_moderator:
+        badges.append("MOD")
+    if author_details.is_chat_sponsor:
+        badges.append("MEMBER")
+    if author_details.is_verified:
+        badges.append("VERIFIED")
+
+    timestamp = datetime.now(UTC)
+    if snippet.published_at:
+        try:
+            timestamp = datetime.fromisoformat(str(snippet.published_at).replace("Z", "+00:00"))
+        except ValueError:
+            pass
+
+    return ChatMessage(
+        platform="youtube",
+        author=str(author_details.display_name or "YouTube"),
+        text=text,
+        author_id=str(author_details.channel_id or snippet.author_channel_id or ""),
+        timestamp=timestamp,
+        badges=tuple(badges),
+        amount=amount,
+        message_id=str(item.id or ""),
+        kind=kind,
+    )
+
+
 def _youtube_renderer_author_id(renderer: dict[str, Any]) -> str:
     external_id = renderer.get("authorExternalChannelId")
     if isinstance(external_id, str) and external_id.strip():
@@ -329,13 +425,13 @@ class YouTubeProvider(BaseProvider):
         self,
         events: Queue[ProviderEvent],
         user_input: str,
-        api_key: str = "",
+        data_api_key: str = "",
         language: str = "en",
     ) -> None:
         super().__init__(events)
         self.language = normalize_language(language)
         self.user_input = normalize_youtube_input(user_input, self.language)
-        self.user_api_key = api_key.strip()
+        self.data_api_key = data_api_key.strip()
         self.session = requests.Session()
         self.session.headers.update(_BROWSER_HEADERS)
         if self.language == "pt-BR":
@@ -343,9 +439,19 @@ class YouTubeProvider(BaseProvider):
         self.session.cookies.set("SOCS", "CAI", domain=".youtube.com")
         self._seen_ids: set[str] = set()
         self._seen_order: deque[str] = deque(maxlen=3_000)
+        self._official_live_chat_id = ""
+        self._official_page_token = ""
+        self._grpc_channel: grpc.Channel | None = None
+        self._grpc_call: grpc.Call | None = None
 
     def stop(self) -> None:
         super().stop()
+        call = self._grpc_call
+        if call is not None:
+            call.cancel()
+        channel = self._grpc_channel
+        if channel is not None:
+            channel.close()
         self.session.close()
 
     def run(self) -> None:
@@ -354,13 +460,29 @@ class YouTubeProvider(BaseProvider):
             try:
                 self.emit_status("connecting", tr(self.language, "searching_live"))
                 video_id = self._resolve_video_id()
-                if self.user_api_key:
+                if self.data_api_key:
                     self._run_official_api(video_id)
                 else:
                     self._run_innertube(video_id)
                 delay = 3.0
             except StreamOffline:
                 self.emit_status("waiting", tr(self.language, "waiting_next_live"))
+                if self.wait(30):
+                    break
+            except ChatDisabled:
+                self.emit_status("error", tr(self.language, "youtube_chat_disabled"))
+                if self.wait(60):
+                    break
+            except InvalidLiveChat:
+                self.emit_status("error", tr(self.language, "youtube_chat_invalid"))
+                if self.wait(30):
+                    break
+            except ApiKeyRejected:
+                self.emit_status("error", tr(self.language, "youtube_api_key_rejected"))
+                if self.wait(60):
+                    break
+            except ChatUnavailable:
+                self.emit_status("error", tr(self.language, "youtube_chat_unavailable"))
                 if self.wait(30):
                     break
             except RateLimited:
@@ -416,7 +538,7 @@ class YouTubeProvider(BaseProvider):
         while not self.stop_event.is_set():
             url = (
                 "https://www.youtube.com/youtubei/v1/live_chat/get_live_chat"
-                f"?key={bootstrap.api_key}&prettyPrint=false"
+                f"?key={bootstrap.innertube_key}&prettyPrint=false"
             )
             headers = {
                 "Origin": "https://www.youtube.com",
@@ -442,9 +564,13 @@ class YouTubeProvider(BaseProvider):
             if response.status_code == 429:
                 raise RateLimited()
             if response.status_code in {401, 403}:
+                failures += 1
+                if failures >= 3:
+                    raise ChatUnavailable("YouTube repeatedly rejected automatic chat access.")
                 bootstrap = self._bootstrap_chat(video_id)
                 continuation = bootstrap.continuation
-                failures = 0
+                if self.wait(min(2**failures, 10)):
+                    return
                 continue
             if response.status_code >= 400:
                 raise ConnectionError(f"YouTube returned HTTP {response.status_code}.")
@@ -456,7 +582,7 @@ class YouTubeProvider(BaseProvider):
 
             live = (payload.get("continuationContents") or {}).get("liveChatContinuation")
             if not isinstance(live, dict):
-                raise ChatUnavailable("The live stream ended or chat was disabled.")
+                raise LiveChatEnded("The live stream ended or chat was disabled.")
 
             messages, deletions = youtube_messages_from_actions(
                 live.get("actions") or [], self.language
@@ -471,7 +597,7 @@ class YouTubeProvider(BaseProvider):
                 raise ChatUnavailable("The live chat was closed.")
             continuation = next_continuation
             failures = 0
-            if self.wait(max(1.0, min(timeout_ms / 1000, 15.0))):
+            if self.wait(max(1.0, timeout_ms / 1000)):
                 return
 
     def _bootstrap_chat(self, video_id: str) -> YouTubeBootstrap:
@@ -493,11 +619,11 @@ class YouTubeProvider(BaseProvider):
         if not continuation:
             raise ChatUnavailable("YouTube did not provide live chat access.")
 
-        api_key = _extract_string(html, "INNERTUBE_API_KEY")
+        innertube_key = _extract_string(html, "INNERTUBE_API_KEY")
         client_name = _extract_string(html, "INNERTUBE_CLIENT_NAME") or "WEB"
         client_version = _extract_string(html, "INNERTUBE_CLIENT_VERSION")
         client_name_numeric = _extract_number(html, "INNERTUBE_CONTEXT_CLIENT_NAME") or "1"
-        if not api_key or not client_version:
+        if not innertube_key or not client_version:
             raise ChatUnavailable("YouTube internal configuration was not found.")
 
         locale = "pt-BR" if self.language == "pt-BR" else "en-US"
@@ -524,7 +650,7 @@ class YouTubeProvider(BaseProvider):
             video_id=video_id,
             video_url=video_url,
             continuation=continuation,
-            api_key=api_key,
+            innertube_key=innertube_key,
             client_name=client_name,
             client_name_numeric=client_name_numeric,
             client_version=client_version,
@@ -532,12 +658,27 @@ class YouTubeProvider(BaseProvider):
         )
 
     def _run_official_api(self, video_id: str) -> None:
+        live_chat_id = self._official_live_chat_id_for_video(video_id)
+        if live_chat_id != self._official_live_chat_id:
+            self._official_live_chat_id = live_chat_id
+            self._official_page_token = ""
+
+        self.emit_status("connected", tr(self.language, "live_official_streaming"))
+        try:
+            self._run_official_stream(video_id, live_chat_id)
+        except StreamingTransportUnavailable:
+            if self.stop_event.is_set():
+                return
+            self.emit_status("connected", tr(self.language, "live_official_polling"))
+            self._run_official_polling(live_chat_id)
+
+    def _official_live_chat_id_for_video(self, video_id: str) -> str:
         details = self._get_json(
             "https://www.googleapis.com/youtube/v3/videos",
             params={
                 "part": "liveStreamingDetails",
                 "id": video_id,
-                "key": self.user_api_key,
+                "key": self.data_api_key,
             },
         )
         items = details.get("items") or []
@@ -546,19 +687,140 @@ class YouTubeProvider(BaseProvider):
         live_details = items[0].get("liveStreamingDetails") or {}
         live_chat_id = live_details.get("activeLiveChatId")
         if not live_chat_id:
-            raise ChatUnavailable("The live stream does not have an active chat.")
+            if live_details.get("actualEndTime") or not live_details.get("actualStartTime"):
+                raise StreamOffline("The live stream is not active.")
+            raise ChatDisabled("The live stream does not have an active chat.")
+        return str(live_chat_id)
 
-        self.emit_status("connected", tr(self.language, "live_official"))
-        page_token = ""
+    def _run_official_stream(self, video_id: str, live_chat_id: str) -> None:
+        failures = 0
+        invalid_token_retried = False
+        transient_codes = {
+            grpc.StatusCode.ABORTED,
+            grpc.StatusCode.CANCELLED,
+            grpc.StatusCode.DEADLINE_EXCEEDED,
+            grpc.StatusCode.INTERNAL,
+            grpc.StatusCode.UNKNOWN,
+            grpc.StatusCode.UNAVAILABLE,
+        }
+        while not self.stop_event.is_set():
+            channel = grpc.secure_channel(
+                "dns:///youtube.googleapis.com:443",
+                grpc.ssl_channel_credentials(),
+                options=(
+                    ("grpc.keepalive_time_ms", 60_000),
+                    ("grpc.keepalive_timeout_ms", 10_000),
+                    ("grpc.http2.max_pings_without_data", 0),
+                ),
+            )
+            self._grpc_channel = channel
+            try:
+                try:
+                    grpc.channel_ready_future(channel).result(timeout=5)
+                except grpc.FutureTimeoutError as exc:
+                    failures += 1
+                    if failures >= 3:
+                        raise StreamingTransportUnavailable(
+                            "The YouTube streaming endpoint is unreachable."
+                        ) from exc
+                    if self.wait(min(2**failures, 10)):
+                        return
+                    continue
+
+                request = stream_list_pb2.LiveChatMessageListRequest(
+                    live_chat_id=live_chat_id,
+                    hl="pt-BR" if self.language == "pt-BR" else "en-US",
+                    profile_image_size=32,
+                    page_token=self._official_page_token,
+                    part=["snippet", "authorDetails"],
+                )
+                stub = stream_list_pb2_grpc.V3DataLiveChatMessageServiceStub(channel)
+                call = stub.StreamList(
+                    request,
+                    metadata=(("x-goog-api-key", self.data_api_key),),
+                )
+                self._grpc_call = call
+                received_response = False
+                for response in call:
+                    if self.stop_event.is_set():
+                        call.cancel()
+                        return
+                    received_response = True
+                    failures = 0
+                    invalid_token_retried = False
+                    if response.next_page_token:
+                        self._official_page_token = str(response.next_page_token)
+                    for item in response.items:
+                        if (
+                            item.snippet.type
+                            == stream_list_pb2.LiveChatMessageSnippet.CHAT_ENDED_EVENT
+                        ):
+                            raise LiveChatEnded("The live chat ended.")
+                        message = official_message_from_stream(item, self.language)
+                        if message is not None:
+                            self._emit_once(message)
+                    if response.offline_at:
+                        raise LiveChatEnded("The live stream went offline.")
+                if self.stop_event.is_set():
+                    return
+                failures += 1
+                if not received_response and failures >= 3:
+                    raise StreamingTransportUnavailable(
+                        "The YouTube streaming endpoint closed without a response."
+                    )
+            except grpc.RpcError as exc:
+                if self.stop_event.is_set():
+                    return
+                code = exc.code()
+                details = (exc.details() or "").casefold()
+                if code == grpc.StatusCode.RESOURCE_EXHAUSTED or "rate" in details:
+                    raise RateLimited() from exc
+                if code == grpc.StatusCode.INVALID_ARGUMENT:
+                    if self._official_page_token and not invalid_token_retried:
+                        self._official_page_token = ""
+                        invalid_token_retried = True
+                        continue
+                    raise InvalidLiveChat(
+                        "YouTube rejected the live chat ID or page token."
+                    ) from exc
+                if code == grpc.StatusCode.NOT_FOUND:
+                    raise InvalidLiveChat("YouTube could not find the live chat ID.") from exc
+                if code == grpc.StatusCode.FAILED_PRECONDITION:
+                    if "disabled" in details:
+                        raise ChatDisabled("The YouTube live chat is disabled.") from exc
+                    current_chat_id = self._official_live_chat_id_for_video(video_id)
+                    if current_chat_id != live_chat_id or "ended" in details:
+                        raise LiveChatEnded("The YouTube live chat ended.") from exc
+                    raise ChatUnavailable("YouTube rejected the current live chat state.") from exc
+                if code in {grpc.StatusCode.PERMISSION_DENIED, grpc.StatusCode.UNAUTHENTICATED}:
+                    raise ApiKeyRejected("The YouTube Data API key was rejected.") from exc
+                if code in transient_codes:
+                    failures += 1
+                    if failures >= 3:
+                        raise StreamingTransportUnavailable(
+                            "The YouTube streaming connection repeatedly failed."
+                        ) from exc
+                else:
+                    raise ChatUnavailable("YouTube live chat streaming failed.") from exc
+            finally:
+                self._grpc_call = None
+                channel.close()
+                if self._grpc_channel is channel:
+                    self._grpc_channel = None
+
+            if self.wait(min(2 ** max(1, failures), 15)):
+                return
+
+    def _run_official_polling(self, live_chat_id: str) -> None:
         while not self.stop_event.is_set():
             params = {
                 "part": "id,snippet,authorDetails",
                 "liveChatId": live_chat_id,
                 "maxResults": 200,
-                "key": self.user_api_key,
+                "key": self.data_api_key,
             }
-            if page_token:
-                params["pageToken"] = page_token
+            if self._official_page_token:
+                params["pageToken"] = self._official_page_token
             payload = self._get_json(
                 "https://www.googleapis.com/youtube/v3/liveChat/messages",
                 params=params,
@@ -568,14 +830,17 @@ class YouTubeProvider(BaseProvider):
                     message = official_message_from_item(item, self.language)
                     if message:
                         self._emit_once(message)
-            page_token = str(payload.get("nextPageToken") or "")
-            if not page_token:
+            if payload.get("offlineAt"):
+                raise LiveChatEnded("The official live chat ended.")
+            self._official_page_token = str(payload.get("nextPageToken") or "")
+            if not self._official_page_token:
                 raise ChatUnavailable("The official live chat was closed.")
             try:
-                interval = int(payload.get("pollingIntervalMillis") or 5_000) / 1000
+                interval_ms = int(payload.get("pollingIntervalMillis") or 5_000)
+                interval = interval_ms / 1000 if interval_ms > 0 else 5.0
             except (TypeError, ValueError):
                 interval = 5.0
-            if self.wait(max(1.0, min(interval, 15.0))):
+            if self.wait(interval):
                 return
 
     def _emit_once(self, message: ChatMessage) -> None:
@@ -612,10 +877,22 @@ class YouTubeProvider(BaseProvider):
             raise RateLimited()
         if response.status_code >= 400:
             try:
-                reason = response.json()["error"]["message"]
-            except (ValueError, KeyError, TypeError):
-                reason = f"HTTP {response.status_code}"
-            raise ChatUnavailable(f"YouTube API: {reason}")
+                error = response.json()["error"]
+                details = error.get("errors") or []
+                reason = str(details[0].get("reason") if details else "")
+            except (ValueError, KeyError, TypeError, AttributeError):
+                reason = ""
+            if reason in {"rateLimitExceeded", "quotaExceeded", "userRequestsExceedRateLimit"}:
+                raise RateLimited()
+            if reason == "liveChatDisabled":
+                raise ChatDisabled("The YouTube live chat is disabled.")
+            if reason == "liveChatEnded":
+                raise LiveChatEnded("The YouTube live chat ended.")
+            if reason == "liveChatNotFound":
+                raise InvalidLiveChat("YouTube could not find the live chat ID.")
+            if reason in {"keyInvalid", "forbidden", "ipRefererBlocked"}:
+                raise ApiKeyRejected("The YouTube Data API key was rejected.")
+            raise ChatUnavailable(f"YouTube API returned HTTP {response.status_code}.")
         try:
             payload = response.json()
         except ValueError as exc:

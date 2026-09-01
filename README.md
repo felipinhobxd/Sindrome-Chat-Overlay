@@ -6,7 +6,7 @@ The app starts in English and also includes a complete **Português (Brasil)** i
 
 ## Download
 
-Open the [latest release](https://github.com/felipinhobxd/Twitch-Youtube-ChatOverlay/releases/latest) and choose one of these files:
+Open the [latest release](https://github.com/felipinhobxd/Sindrome-Chat-Overlay/releases/latest) and choose one of these files:
 
 - **`SindromeChatOverlay-Setup-vX.Y.Z.exe` — recommended.** Installs the app for the current Windows user, creates Start Menu and optional desktop shortcuts, and adds a standard uninstaller.
 - **`SindromeChatOverlay.exe`** — portable standalone executable; no installation required.
@@ -30,6 +30,7 @@ You can replace either channel in the app settings.
 - Gives each username an individual, stable, readable colour without changing platform labels or badges.
 - Uses the user's official Twitch chat colour when available and a deterministic account-ID colour for YouTube and Twitch fallbacks.
 - Automatically detects an active YouTube live stream from a channel URL.
+- Uses YouTube's official low-latency `liveChatMessages.streamList` connection when a Data API key is configured.
 - Visually identifies Twitch, YouTube, moderators, subscribers, members, Bits, Super Chats, and membership events.
 - Automatically reconnects after temporary network or platform failures.
 - Automatically scrolls to keep the newest message visible.
@@ -37,7 +38,7 @@ You can replace either channel in the app settings.
 - Removes a message when the platform reports that it was deleted.
 - Transparent, borderless, resizable, and always-on-top window.
 - Click-through mode prevents the overlay from capturing mouse input while gaming.
-- Global `Ctrl + Shift + O` shortcut locks or unlocks mouse clicks.
+- Native Windows global `Ctrl + Shift + O` shortcut locks or unlocks mouse clicks with one press, even when another application has focus.
 - System tray menu for showing, hiding, configuring, locking, or closing the app.
 - Configurable font size, opacity, message limit, and message lifetime.
 - English and Brazilian Portuguese interface languages.
@@ -66,15 +67,37 @@ The main window, settings, system tray, notifications, platform statuses, automa
 - When locked, use the same shortcut or the system tray icon to unlock the overlay.
 - The `⌫` button only clears the local overlay; it does not delete platform messages.
 
-Borderless-windowed or windowed games provide the best compatibility. Windows may prevent overlays from appearing above some exclusive-fullscreen games.
+Windowed and borderless-fullscreen games provide the best compatibility. The app uses the native Windows TOPMOST Z-order, reapplies it after restore, and does not activate the overlay while click-through is enabled.
 
-## YouTube modes
+Exclusive fullscreen is different: a game that owns the display surface can bypass normal desktop composition, so Windows may not be able to place any ordinary top-level window above it. This project intentionally does not inject DLLs, hook DirectX, modify game processes, or use anti-cheat-sensitive techniques. Use borderless fullscreen when an exclusive-fullscreen game hides the overlay.
 
-No API key is required by default. Automatic mode reads public data used by YouTube's live chat page.
+## YouTube connection
 
-Each user may optionally enter their own **YouTube Data API v3** key. When a key is present, the app uses the official API endpoints. Never embed a personal key in source code or in an executable you intend to share.
+The settings intentionally contain only two YouTube inputs:
 
-Automatic mode follows a public but undocumented YouTube interface, so a future site change may require an application update. Official API mode is the more stable option when a key is available.
+- **Channel or live stream:** a channel handle/URL or a specific live video URL. The app resolves this to the active Video ID automatically.
+- **YouTube Data API key (optional):** enables the official low-latency API path. The field is masked. On Windows, the saved value is encrypted for the current Windows account with DPAPI and is never written to the technical log.
+
+When a Data API key is present, the app:
+
+1. resolves the channel/live URL to a Video ID;
+2. calls `videos.list(part=liveStreamingDetails)` to discover `activeLiveChatId`;
+3. opens `liveChatMessages.streamList` over a background gRPC/HTTP/2 connection;
+4. preserves `nextPageToken` when reconnecting, keeps response order, and ignores duplicate message IDs;
+5. falls back to `liveChatMessages.list` only if the streaming transport repeatedly cannot be established. The fallback waits for the exact `pollingIntervalMillis` returned by YouTube.
+
+Without a key, automatic mode reads the public live-chat data used by YouTube's web page. This mode requires no account, but it uses an undocumented public interface that YouTube may change. OAuth is not used because the overlay only reads public chat.
+
+| Item | Purpose |
+| --- | --- |
+| Channel/live URL | Finds the current Video ID or identifies a specific live video. |
+| Video ID | Identifies the live video; discovered automatically. |
+| Live Chat ID | Identifies that video's live chat; discovered automatically in official API mode. |
+| Data API key | Authorizes public YouTube Data API requests and the official streaming connection. |
+| OAuth | Not used; no YouTube account access is requested. |
+| Stream Key | Broadcast credential for an encoder. It is never requested, stored, or used to read chat. |
+
+Never embed a personal Data API key in source code or an executable you intend to share.
 
 ## Troubleshooting
 
@@ -104,6 +127,8 @@ The generated files do not have a commercial code-signing certificate. SmartScre
 - Press `Ctrl + Shift + O`.
 - To reset settings, close the app and remove `%APPDATA%\SindromeChatOverlay\settings.json`.
 
+If Windows reports that the global shortcut is unavailable, another program has already registered `Ctrl + Shift + O`. Close or reconfigure that program. Until the conflict is removed, the app provides a focused-window fallback and shows a tray warning.
+
 ## Run from source
 
 Install [64-bit Python 3.12](https://www.python.org/downloads/windows/) and enable **Add Python to PATH**, then double-click `RUN_APP.bat`.
@@ -131,7 +156,7 @@ dist\SindromeChatOverlay.exe
 The release workflow uses [Inno Setup](https://jrsoftware.org/isinfo.php) and `installer/SindromeChatOverlay.iss` to create the installer. After building the portable executable, a local installer can be compiled with:
 
 ```powershell
-& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DAppVersion=1.3.0 installer\SindromeChatOverlay.iss
+& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DAppVersion=1.4.0 installer\SindromeChatOverlay.iss
 ```
 
 The installer uses a stable application ID, supports in-place upgrades, installs per user without requiring administrator access, creates shortcuts, and includes an uninstaller.
@@ -144,7 +169,7 @@ The workflow runs after a push to `main` and can also be started manually from *
 
 ## Development notes
 
-Network providers run in separate worker threads; only the main thread updates the Qt interface. Requests use HTTPS/TLS, timeouts, and exponential reconnect delays. API keys are never written to the technical log.
+Network providers run in separate worker threads; only the main thread updates the Qt interface. Requests use HTTPS/TLS, timeouts, bounded reconnect delays, message-ID deduplication, and bounded UI/image caches. Provider shutdown cancels the active Twitch socket or YouTube stream before reconnection. API keys are never written to the technical log.
 
 ## References
 

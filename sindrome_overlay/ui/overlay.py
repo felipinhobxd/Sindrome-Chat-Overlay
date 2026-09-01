@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ctypes
 import logging
 import queue
 import sys
@@ -9,7 +8,15 @@ from collections import deque
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer
-from PySide6.QtGui import QAction, QCloseEvent, QIcon, QKeySequence, QMouseEvent, QShortcut
+from PySide6.QtGui import (
+    QAction,
+    QCloseEvent,
+    QIcon,
+    QKeySequence,
+    QMouseEvent,
+    QShortcut,
+    QShowEvent,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -31,6 +38,7 @@ from ..models import ChatMessage
 from ..providers import TwitchProvider, YouTubeProvider
 from ..providers.base import BaseProvider
 from ..settings import Settings, SettingsStore
+from ..win32 import WindowsGlobalHotkey, WindowsOverlayController, native_message_values
 from .message_card import MessageCard
 from .settings_dialog import SettingsDialog
 from .theme import build_stylesheet
@@ -67,30 +75,6 @@ class DragHeader(QFrame):
         super().mouseReleaseEvent(event)
 
 
-class GlobalHotkeyPoller(QObject):
-    """Small Win32 hotkey poller that works even while the overlay ignores clicks."""
-
-    def __init__(self, callback, parent: QObject | None = None) -> None:
-        super().__init__(parent)
-        self.callback = callback
-        self._was_down = False
-        self.timer = QTimer(self)
-        self.timer.setInterval(80)
-        self.timer.timeout.connect(self._poll)
-        if sys.platform == "win32":
-            self.timer.start()
-
-    def _poll(self) -> None:
-        user32 = ctypes.windll.user32
-        control = bool(user32.GetAsyncKeyState(0x11) & 0x8000)
-        shift = bool(user32.GetAsyncKeyState(0x10) & 0x8000)
-        letter_o = bool(user32.GetAsyncKeyState(0x4F) & 0x8000)
-        is_down = control and shift and letter_o
-        if is_down and not self._was_down:
-            self.callback()
-        self._was_down = is_down
-
-
 class OverlayWindow(QMainWindow):
     def __init__(
         self,
@@ -113,9 +97,13 @@ class OverlayWindow(QMainWindow):
         self.status_labels: dict[str, QLabel] = {}
         self._shutting_down = False
         self._first_lock_notice = True
+        self.global_hotkey = WindowsGlobalHotkey(self.toggle_click_through, logger)
+        self.native_window = WindowsOverlayController(logger)
+        self._fallback_shortcut: QShortcut | None = None
+        self._hotkey_warning_shown = False
 
-        flags = Qt.FramelessWindowHint
-        if settings.always_on_top:
+        flags = Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint
+        if settings.always_on_top and sys.platform != "win32":
             flags |= Qt.WindowStaysOnTopHint
         self.setWindowFlags(flags)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
@@ -143,13 +131,87 @@ class OverlayWindow(QMainWindow):
         self.expiry_timer.timeout.connect(self._expire_messages)
         self.expiry_timer.start()
 
-        self.hotkey_poller = GlobalHotkeyPoller(self.toggle_click_through, self)
-        shortcut = QShortcut(QKeySequence("Ctrl+Shift+O"), self)
-        shortcut.activated.connect(self.toggle_click_through)
-        self._shortcut = shortcut
+        self.native_state_timer = QTimer(self)
+        self.native_state_timer.setInterval(2_500)
+        self.native_state_timer.timeout.connect(self._recover_topmost)
+        self.native_state_timer.start()
+
+        QTimer.singleShot(0, self._restore_native_state)
 
         self._restart_providers()
         QTimer.singleShot(150, lambda: self.set_click_through(self.settings.click_through))
+
+    def _register_global_hotkey(self) -> None:
+        if self._shutting_down:
+            return
+        if sys.platform == "win32" and self.global_hotkey.register(int(self.winId())):
+            if self._fallback_shortcut is not None:
+                self._fallback_shortcut.setEnabled(False)
+                self._fallback_shortcut.deleteLater()
+                self._fallback_shortcut = None
+            self._hotkey_warning_shown = False
+            return
+        if self._fallback_shortcut is None:
+            shortcut = QShortcut(QKeySequence("Ctrl+Shift+O"), self)
+            shortcut.setContext(Qt.ApplicationShortcut)
+            shortcut.activated.connect(self.toggle_click_through)
+            self._fallback_shortcut = shortcut
+        if (
+            sys.platform == "win32"
+            and self.tray is not None
+            and not self._hotkey_warning_shown
+        ):
+            self.tray.showMessage(
+                self._text("hotkey_unavailable_title"),
+                self._text("hotkey_unavailable_message"),
+                QSystemTrayIcon.Warning,
+                6_000,
+            )
+            self._hotkey_warning_shown = True
+
+    def _restore_native_state(self) -> None:
+        if self._shutting_down:
+            return
+        self._register_global_hotkey()
+        self._apply_native_window_state()
+
+    def _apply_native_window_state(self) -> None:
+        if sys.platform != "win32" or self._shutting_down:
+            return
+        self.native_window.apply(
+            int(self.winId()),
+            always_on_top=self.settings.always_on_top,
+            click_through=self.settings.click_through,
+        )
+
+    def _recover_topmost(self) -> None:
+        if (
+            sys.platform == "win32"
+            and self.settings.always_on_top
+            and self.isVisible()
+            and not self.isMinimized()
+            and not self._shutting_down
+        ):
+            self._apply_native_window_state()
+
+    def nativeEvent(self, event_type, message):
+        if sys.platform == "win32":
+            try:
+                message_id, wparam = native_message_values(message)
+                if self.global_hotkey.dispatch(message_id, wparam):
+                    return True, 0
+            except (TypeError, ValueError, OSError):
+                pass
+        return super().nativeEvent(event_type, message)
+
+    def showEvent(self, event: QShowEvent) -> None:
+        super().showEvent(event)
+        QTimer.singleShot(0, self._restore_native_state)
+
+    def changeEvent(self, event: QEvent) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.WindowStateChange and not self.isMinimized():
+            QTimer.singleShot(0, self._restore_native_state)
 
     def _build_ui(self) -> None:
         root = QFrame()
@@ -317,9 +379,7 @@ class OverlayWindow(QMainWindow):
         self.settings.window_height = self.height()
 
     def _restart_providers(self) -> None:
-        for provider in self.providers:
-            provider.stop()
-        self.providers.clear()
+        self._stop_providers()
         # Old workers keep their old queue, so late shutdown events cannot overwrite new status.
         self.events = queue.Queue()
 
@@ -345,6 +405,17 @@ class OverlayWindow(QMainWindow):
             provider.start()
         else:
             self._set_status("youtube", "disabled", self._text("disabled"))
+
+    def _stop_providers(self) -> None:
+        old_providers = list(self.providers)
+        self.providers.clear()
+        for provider in old_providers:
+            provider.stop()
+        for provider in old_providers:
+            if provider.is_alive():
+                provider.join(timeout=1.0)
+                if provider.is_alive():
+                    self.log.warning("%s provider did not stop within one second.", provider.platform)
 
     def _drain_events(self) -> None:
         for _ in range(100):
@@ -532,6 +603,9 @@ class OverlayWindow(QMainWindow):
         self.setStyleSheet(build_stylesheet(self.settings))
 
     def _apply_window_flags(self) -> None:
+        if sys.platform == "win32":
+            self._apply_native_window_state()
+            return
         was_visible = self.isVisible()
         flags = self.windowFlags()
         if self.settings.always_on_top:
@@ -579,39 +653,20 @@ class OverlayWindow(QMainWindow):
             if was_visible:
                 self.show()
             return
-        try:
-            user32 = ctypes.windll.user32
-            hwnd = int(self.winId())
-            get_style = getattr(user32, "GetWindowLongPtrW", user32.GetWindowLongW)
-            set_style = getattr(user32, "SetWindowLongPtrW", user32.SetWindowLongW)
-            gwl_exstyle = -20
-            ws_ex_transparent = 0x00000020
-            ws_ex_layered = 0x00080000
-            ws_ex_noactivate = 0x08000000
-            style = get_style(hwnd, gwl_exstyle)
-            if enabled:
-                style |= ws_ex_transparent | ws_ex_layered | ws_ex_noactivate
-            else:
-                style &= ~ws_ex_transparent
-                style &= ~ws_ex_noactivate
-            set_style(hwnd, gwl_exstyle, style)
-            user32.SetWindowPos(
-                hwnd,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0x0001 | 0x0002 | 0x0004 | 0x0020,
-            )
-        except Exception as exc:  # noqa: BLE001 - best-effort Win32 integration
-            self.log.warning("Unable to change click-through state: %s", exc)
+        self._apply_native_window_state()
 
     def toggle_visibility(self) -> None:
-        if self.isVisible():
+        if self.isMinimized():
+            self.showNormal()
+            self._restore_native_state()
+            if not self.settings.click_through:
+                self.raise_()
+                self.activateWindow()
+        elif self.isVisible():
             self.hide()
         else:
             self.show()
+            self._restore_native_state()
             if not self.settings.click_through:
                 self.raise_()
                 self.activateWindow()
@@ -627,14 +682,19 @@ class OverlayWindow(QMainWindow):
             event.accept()
             return
         self._shutting_down = True
+        self.event_timer.stop()
+        self.expiry_timer.stop()
+        self.native_state_timer.stop()
+        self.global_hotkey.unregister()
+        if self._fallback_shortcut is not None:
+            self._fallback_shortcut.setEnabled(False)
         self._remember_geometry()
         try:
             self.store.save(self.settings)
         except OSError as exc:
             self.log.warning("Unable to save settings on close: %s", exc)
-        for provider in self.providers:
-            provider.stop()
-        self.providers.clear()
+        self._stop_providers()
+        self.events = queue.Queue()
         if self.tray:
             self.tray.hide()
         event.accept()

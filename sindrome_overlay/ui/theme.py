@@ -7,8 +7,17 @@ def _alpha(percent: int) -> int:
     return round(max(0, min(100, percent)) * 2.55)
 
 
+def _scaled_alpha(base_alpha: int, percent: int) -> int:
+    return round(base_alpha * max(0, min(100, percent)) / 100)
+
+
 def build_stylesheet(settings: Settings) -> str:
     panel_alpha = _alpha(settings.background_opacity)
+    panel_border_alpha = _scaled_alpha(36, settings.background_opacity)
+    header_alpha = _scaled_alpha(225, settings.background_opacity)
+    header_border_alpha = _scaled_alpha(26, settings.background_opacity)
+    empty_alpha = _scaled_alpha(95, settings.background_opacity)
+    empty_border_alpha = _scaled_alpha(45, settings.background_opacity)
     card_alpha = _alpha(settings.card_opacity)
     return f"""
         QWidget {{
@@ -18,12 +27,12 @@ def build_stylesheet(settings: Settings) -> str:
         }}
         QFrame#OverlayRoot {{
             background-color: rgba(8, 11, 19, {panel_alpha});
-            border: 1px solid rgba(255, 255, 255, 36);
+            border: 1px solid rgba(255, 255, 255, {panel_border_alpha});
             border-radius: 16px;
         }}
         QFrame#Header {{
-            background-color: rgba(14, 19, 31, 225);
-            border-bottom: 1px solid rgba(255, 255, 255, 26);
+            background-color: rgba(14, 19, 31, {header_alpha});
+            border-bottom: 1px solid rgba(255, 255, 255, {header_border_alpha});
             border-top-left-radius: 15px;
             border-top-right-radius: 15px;
         }}
@@ -90,8 +99,8 @@ def build_stylesheet(settings: Settings) -> str:
         }}
         QLabel#EmptyState {{
             color: #C3CBDA;
-            background: rgba(8, 11, 19, 95);
-            border: 1px dashed rgba(255, 255, 255, 45);
+            background: rgba(8, 11, 19, {empty_alpha});
+            border: 1px dashed rgba(255, 255, 255, {empty_border_alpha});
             border-radius: 12px;
             padding: 22px;
         }}

@@ -117,9 +117,13 @@ jobs:
 
             The interface starts in English and can be changed to Brazilian Portuguese under Settings → Language. Automatic scrolling and message sounds are enabled by default.
 
-            Native Twitch emotes now appear as images inside messages, and official Twitch badges appear next to usernames. Images load asynchronously and are cached locally so chat processing never blocks.
+            YouTube official mode now uses the low-latency `liveChatMessages.streamList` connection, resumes from `nextPageToken`, deduplicates messages, and falls back to API-directed polling only when the streaming transport is unavailable.
 
-            Usernames now have individual, stable colours. Twitch uses each user's official chat colour when available, while YouTube and colourless Twitch users receive a deterministic readable colour based on their stable account ID.
+            `Ctrl + Shift + O` now uses one native Windows global hotkey registration with no duplicate listener. TOPMOST and click-through state are restored without activating or recreating the overlay window.
+
+            Background opacity now also controls the panel border, header background, and related contours. At 0%, the panel outline disappears while chat messages and resizing remain available.
+
+            The optional YouTube Data API key is clearly distinguished from a Stream Key, masked in settings, protected with Windows DPAPI, and excluded from logs.
 
             **Recommended:** download `SindromeChatOverlay-Setup-v${{ env.VERSION }}.exe` for a standard Windows installation with shortcuts and an uninstaller.
 

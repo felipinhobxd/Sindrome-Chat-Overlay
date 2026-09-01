@@ -1,11 +1,11 @@
 #ifndef AppVersion
-  #define AppVersion "1.3.0"
+  #define AppVersion "1.4.0"
 #endif
 
 #define AppName "Sindrome Chat Overlay"
 #define AppExeName "SindromeChatOverlay.exe"
 #define AppPublisher "Sindrome Games"
-#define AppUrl "https://github.com/felipinhobxd/Twitch-Youtube-ChatOverlay"
+#define AppUrl "https://github.com/felipinhobxd/Sindrome-Chat-Overlay"
 
 [Setup]
 AppId={{E90213A4-73D5-4A35-85DD-F00BD0766535}

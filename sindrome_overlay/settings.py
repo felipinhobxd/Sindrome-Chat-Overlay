@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import base64
+import ctypes
 import json
 import os
+from ctypes import wintypes
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import Any
@@ -10,6 +13,14 @@ from .i18n import normalize_language
 from .url_utils import normalize_twitch_channel, normalize_youtube_input
 
 APP_DIR_NAME = "SindromeChatOverlay"
+_DPAPI_PREFIX = "dpapi:"
+
+
+class _DataBlob(ctypes.Structure):
+    _fields_ = [
+        ("cbData", wintypes.DWORD),
+        ("pbData", ctypes.POINTER(ctypes.c_ubyte)),
+    ]
 
 
 def app_data_dir() -> Path:
@@ -78,6 +89,12 @@ class SettingsStore:
                 return defaults
             allowed = {item.name for item in fields(Settings)}
             values = {key: value for key, value in payload.items() if key in allowed}
+            encrypted_key = values.get("youtube_api_key")
+            if isinstance(encrypted_key, str):
+                try:
+                    values["youtube_api_key"] = _unprotect_secret(encrypted_key)
+                except OSError:
+                    values["youtube_api_key"] = ""
             return Settings(**values).normalized()
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             return defaults
@@ -86,8 +103,10 @@ class SettingsStore:
         settings.normalized()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temp_path = self.path.with_suffix(".tmp")
+        payload = asdict(settings)
+        payload["youtube_api_key"] = _protect_secret(settings.youtube_api_key)
         temp_path.write_text(
-            json.dumps(asdict(settings), ensure_ascii=False, indent=2),
+            json.dumps(payload, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
         os.replace(temp_path, self.path)
@@ -99,3 +118,92 @@ def _clamp(value: Any, minimum: int, maximum: int) -> int:
     except (TypeError, ValueError):
         return minimum
     return max(minimum, min(maximum, numeric))
+
+
+def _protect_secret(value: str) -> str:
+    if not value or os.name != "nt":
+        return value
+    source, source_buffer = _blob(value.encode("utf-8"))
+    output = _DataBlob()
+    crypt32, kernel32 = _dpapi_libraries()
+    if not crypt32.CryptProtectData(
+        ctypes.byref(source),
+        "Sindrome Chat Overlay YouTube API key",
+        None,
+        None,
+        None,
+        0x01,
+        ctypes.byref(output),
+    ):
+        raise OSError(ctypes.get_last_error(), "Windows could not protect the YouTube API key")
+    try:
+        protected = ctypes.string_at(output.pbData, output.cbData)
+        return _DPAPI_PREFIX + base64.b64encode(protected).decode("ascii")
+    finally:
+        kernel32.LocalFree(output.pbData)
+        del source_buffer
+
+
+def _unprotect_secret(value: str) -> str:
+    if not value.startswith(_DPAPI_PREFIX):
+        return value
+    if os.name != "nt":
+        return ""
+    try:
+        protected = base64.b64decode(value.removeprefix(_DPAPI_PREFIX), validate=True)
+    except (ValueError, TypeError) as exc:
+        raise OSError("The encrypted YouTube API key is invalid") from exc
+    source, source_buffer = _blob(protected)
+    output = _DataBlob()
+    crypt32, kernel32 = _dpapi_libraries()
+    if not crypt32.CryptUnprotectData(
+        ctypes.byref(source),
+        None,
+        None,
+        None,
+        None,
+        0x01,
+        ctypes.byref(output),
+    ):
+        raise OSError(ctypes.get_last_error(), "Windows could not read the YouTube API key")
+    try:
+        return ctypes.string_at(output.pbData, output.cbData).decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise OSError("The encrypted YouTube API key is invalid") from exc
+    finally:
+        kernel32.LocalFree(output.pbData)
+        del source_buffer
+
+
+def _blob(value: bytes) -> tuple[_DataBlob, ctypes.Array[ctypes.c_char]]:
+    buffer = ctypes.create_string_buffer(value)
+    pointer = ctypes.cast(buffer, ctypes.POINTER(ctypes.c_ubyte))
+    return _DataBlob(len(value), pointer), buffer
+
+
+def _dpapi_libraries() -> tuple[Any, Any]:
+    crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    crypt32.CryptProtectData.argtypes = [
+        ctypes.POINTER(_DataBlob),
+        wintypes.LPCWSTR,
+        ctypes.POINTER(_DataBlob),
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.POINTER(_DataBlob),
+    ]
+    crypt32.CryptProtectData.restype = wintypes.BOOL
+    crypt32.CryptUnprotectData.argtypes = [
+        ctypes.POINTER(_DataBlob),
+        ctypes.c_void_p,
+        ctypes.POINTER(_DataBlob),
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.POINTER(_DataBlob),
+    ]
+    crypt32.CryptUnprotectData.restype = wintypes.BOOL
+    kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+    kernel32.LocalFree.restype = ctypes.c_void_p
+    return crypt32, kernel32

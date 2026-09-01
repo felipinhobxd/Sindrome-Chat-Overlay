@@ -9,6 +9,9 @@ Dependencies installed during the build include:
 
 - [PySide6 / Qt for Python](https://doc.qt.io/qtforpython-6/licenses.html), available under LGPL-3.0/GPL-3.0 and commercial licensing options, depending on the components used.
 - [Requests](https://github.com/psf/requests), Apache-2.0.
+- [gRPC Python](https://github.com/grpc/grpc), Apache-2.0.
+- [Protocol Buffers](https://github.com/protocolbuffers/protobuf), BSD-3-Clause.
+- The minimal YouTube `streamList` protocol schema used by the client is derived from Google's published API schema, Apache-2.0.
 - [PyInstaller](https://pyinstaller.org/), GPL-2.0 with the bootloader distribution exception.
 - [Pillow](https://python-pillow.github.io/), historical HPND license.
 - [Inno Setup](https://jrsoftware.org/isinfo.php), used only to compile the Windows installer and distributed under its own license.
