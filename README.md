@@ -25,6 +25,10 @@ You can replace either channel in the app settings.
 ## Features
 
 - Combines Twitch and YouTube messages in arrival order.
+- Renders native Twitch emotes as images inside messages.
+- Renders official Twitch badge images next to usernames, including event and recap badges.
+- Gives each username an individual, stable, readable colour without changing platform labels or badges.
+- Uses the user's official Twitch chat colour when available and a deterministic account-ID colour for YouTube and Twitch fallbacks.
 - Automatically detects an active YouTube live stream from a channel URL.
 - Visually identifies Twitch, YouTube, moderators, subscribers, members, Bits, Super Chats, and membership events.
 - Automatically reconnects after temporary network or platform failures.
@@ -38,6 +42,7 @@ You can replace either channel in the app settings.
 - Configurable font size, opacity, message limit, and message lifetime.
 - English and Brazilian Portuguese interface languages.
 - Persistent user settings and a rotating technical log at `%APPDATA%\SindromeChatOverlay\overlay.log`.
+- Asynchronous Twitch image downloads with a bounded local cache under `%APPDATA%\SindromeChatOverlay\twitch-assets`.
 
 > YouTube integration displays a live stream's **live chat**, not regular comments posted below recorded videos.
 
@@ -85,6 +90,10 @@ Automatic mode follows a public but undocumented YouTube interface, so a future 
 - Some corporate networks or antivirus products block TLS port `6697`, used by Twitch IRC.
 - Inspect `%APPDATA%\SindromeChatOverlay\overlay.log` for the reconnect reason.
 
+### A Twitch emote or badge briefly appears as text
+
+Images are downloaded asynchronously so the chat never waits for the Twitch CDN. The name is used as a safe fallback during the first download or if the image service is temporarily unavailable. Successfully downloaded images are cached for later messages and future launches.
+
 ### Windows SmartScreen displays a warning
 
 The generated files do not have a commercial code-signing certificate. SmartScreen may warn about new, unsigned applications. Only run builds from this repository or another source you trust.
@@ -122,7 +131,7 @@ dist\SindromeChatOverlay.exe
 The release workflow uses [Inno Setup](https://jrsoftware.org/isinfo.php) and `installer/SindromeChatOverlay.iss` to create the installer. After building the portable executable, a local installer can be compiled with:
 
 ```powershell
-& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DAppVersion=1.2.0 installer\SindromeChatOverlay.iss
+& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DAppVersion=1.3.0 installer\SindromeChatOverlay.iss
 ```
 
 The installer uses a stable application ID, supports in-place upgrades, installs per user without requiring administrator access, creates shortcuts, and includes an uninstaller.

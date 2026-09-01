@@ -20,12 +20,12 @@ class ModelTests(unittest.TestCase):
 
     def test_colour_is_validated(self) -> None:
         self.assertEqual(
-            ChatMessage("twitch", "A", "B", author_colour="#12ABef").safe_author_colour,
-            "#12ABef",
+            ChatMessage("twitch", "A", "B", author_colour="#12ABEF").safe_author_colour,
+            "#12ABEF",
         )
-        self.assertEqual(
+        self.assertRegex(
             ChatMessage("twitch", "A", "B", author_colour="red; bad").safe_author_colour,
-            "#B7C2D8",
+            r"^#[0-9A-F]{6}$",
         )
 
 

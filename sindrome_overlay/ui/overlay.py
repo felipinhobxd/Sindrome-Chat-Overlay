@@ -34,6 +34,7 @@ from ..settings import Settings, SettingsStore
 from .message_card import MessageCard
 from .settings_dialog import SettingsDialog
 from .theme import build_stylesheet
+from .twitch_assets import TwitchAssetCache
 
 
 def resource_path(relative: str) -> Path:
@@ -101,6 +102,7 @@ class OverlayWindow(QMainWindow):
         self.settings = settings
         self.store = store
         self.log = logger
+        self.twitch_assets = TwitchAssetCache(logger, self)
         self.events: queue.Queue[ProviderEvent] = queue.Queue()
         self.providers: list[BaseProvider] = []
         self.messages: list[ChatMessage] = []
@@ -377,7 +379,12 @@ class OverlayWindow(QMainWindow):
 
     def _append_card(self, message: ChatMessage) -> None:
         self.empty_state.hide()
-        card = MessageCard(message, self.settings, self.message_host)
+        card = MessageCard(
+            message,
+            self.settings,
+            self.twitch_assets,
+            self.message_host,
+        )
         self.cards.append(card)
         if message.message_id:
             self.cards_by_id[message.message_id] = card

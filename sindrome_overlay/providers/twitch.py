@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+import re
 import socket
 import ssl
 from datetime import UTC, datetime
@@ -8,9 +9,11 @@ from queue import Queue
 
 from ..events import ProviderEvent
 from ..i18n import normalize_language, tr
-from ..models import ChatMessage
+from ..models import ChatBadge, ChatEmote, ChatMessage
 from ..url_utils import normalize_twitch_channel
 from .base import BaseProvider
+
+_EMOTE_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
 
 def decode_irc_tag(value: str) -> str:
@@ -35,6 +38,84 @@ def parse_irc_tags(raw: str) -> dict[str, str]:
     return tags
 
 
+def parse_twitch_emotes(raw: str, text: str) -> tuple[ChatEmote, ...]:
+    parsed: list[ChatEmote] = []
+    for group in raw.split("/"):
+        emote_id, separator, ranges = group.partition(":")
+        if not separator or not _EMOTE_ID.fullmatch(emote_id):
+            continue
+        for raw_range in ranges.split(","):
+            start_text, dash, end_text = raw_range.partition("-")
+            if not dash or not start_text.isdigit() or not end_text.isdigit():
+                continue
+            start_offset = int(start_text)
+            end_offset = int(end_text) + 1
+            candidates = _position_candidates(text, start_offset, end_offset)
+            if not candidates:
+                continue
+            start, end = max(candidates, key=lambda item: _position_score(text, *item))
+            name = text[start:end]
+            if not name or any(char.isspace() for char in name):
+                continue
+            parsed.append(ChatEmote(emote_id, start, end, name))
+
+    ordered: list[ChatEmote] = []
+    for emote in sorted(parsed, key=lambda item: (item.start, item.end, item.emote_id)):
+        if ordered and emote.start < ordered[-1].end:
+            continue
+        ordered.append(emote)
+    return tuple(ordered)
+
+
+def parse_twitch_badges(raw: str, room_id: str = "") -> tuple[ChatBadge, ...]:
+    badges: list[ChatBadge] = []
+    safe_room_id = room_id if room_id.isdigit() else ""
+    for raw_badge in raw.split(","):
+        set_id, separator, version = raw_badge.partition("/")
+        if not separator or not _EMOTE_ID.fullmatch(set_id) or not _EMOTE_ID.fullmatch(version):
+            continue
+        badges.append(ChatBadge(set_id, version, safe_room_id))
+    return tuple(badges)
+
+
+def _position_candidates(text: str, start: int, end: int) -> list[tuple[int, int]]:
+    candidates: list[tuple[int, int]] = []
+    if 0 <= start < end <= len(text):
+        candidates.append((start, end))
+
+    utf16_start = _utf16_offset_to_index(text, start)
+    utf16_end = _utf16_offset_to_index(text, end)
+    utf16_candidate = (utf16_start, utf16_end)
+    if 0 <= utf16_start < utf16_end <= len(text) and utf16_candidate not in candidates:
+        candidates.append(utf16_candidate)
+    return candidates
+
+
+def _utf16_offset_to_index(text: str, offset: int) -> int:
+    units = 0
+    for index, char in enumerate(text):
+        if units == offset:
+            return index
+        units += 2 if ord(char) > 0xFFFF else 1
+        if units > offset:
+            return -1
+    return len(text) if units == offset else -1
+
+
+def _position_score(text: str, start: int, end: int) -> int:
+    value = text[start:end]
+    if not value or any(char.isspace() for char in value):
+        return -100
+    score = 5
+    if start == 0 or text[start - 1].isspace():
+        score += 3
+    if end == len(text) or text[end].isspace():
+        score += 3
+    if value.isascii():
+        score += 1
+    return score
+
+
 def parse_twitch_line(line: str, language: str = "en") -> tuple[str, ChatMessage | str | None]:
     tags: dict[str, str] = {}
     rest = line
@@ -44,11 +125,14 @@ def parse_twitch_line(line: str, language: str = "en") -> tuple[str, ChatMessage
 
     if " PRIVMSG " in rest and " :" in rest:
         prefix, message_text = rest.split(" :", 1)
+        if message_text.startswith("\x01ACTION ") and message_text.endswith("\x01"):
+            message_text = message_text[len("\x01ACTION ") : -1]
         fallback_author = prefix.split("!", 1)[0].lstrip(":")
         author = tags.get("display-name") or fallback_author or "Twitch"
         badge_names = tuple(
             badge.split("/", 1)[0].upper() for badge in tags.get("badges", "").split(",") if badge
         )
+        badge_refs = parse_twitch_badges(tags.get("badges", ""), tags.get("room-id", ""))
         amount = f"{tags['bits']} Bits" if tags.get("bits") else ""
         timestamp = datetime.now(UTC)
         if tags.get("tmi-sent-ts", "").isdigit():
@@ -61,13 +145,16 @@ def parse_twitch_line(line: str, language: str = "en") -> tuple[str, ChatMessage
             ChatMessage(
                 platform="twitch",
                 author=author,
-                text=message_text.strip(),
+                text=message_text,
+                author_id=tags.get("user-id", ""),
                 timestamp=timestamp,
                 author_colour=tags.get("color", ""),
                 badges=badge_names,
                 amount=amount,
                 message_id=tags.get("id", ""),
                 kind="bits" if amount else "message",
+                emotes=parse_twitch_emotes(tags.get("emotes", ""), message_text),
+                badge_refs=badge_refs,
             ),
         )
 
@@ -75,15 +162,24 @@ def parse_twitch_line(line: str, language: str = "en") -> tuple[str, ChatMessage
     if command == "USERNOTICE" or " USERNOTICE " in rest:
         text = tags.get("system-msg", tr(language, "twitch_event"))
         author = tags.get("display-name") or tags.get("login") or "Twitch"
+        badge_names = tuple(
+            badge.split("/", 1)[0].upper() for badge in tags.get("badges", "").split(",") if badge
+        )
         return (
             "message",
             ChatMessage(
                 platform="twitch",
                 author=author,
                 text=text,
+                author_id=tags.get("user-id", ""),
                 author_colour=tags.get("color", ""),
+                badges=badge_names,
                 message_id=tags.get("id", ""),
                 kind="event",
+                badge_refs=parse_twitch_badges(
+                    tags.get("badges", ""),
+                    tags.get("room-id", ""),
+                ),
             ),
         )
     if " CLEARMSG " in rest:

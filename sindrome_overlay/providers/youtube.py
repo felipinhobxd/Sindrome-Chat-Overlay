@@ -217,6 +217,7 @@ def _message_from_renderer(item: dict[str, Any], language: str = "en") -> ChatMe
         return None
 
     author = clean_text(renderer.get("authorName")) or "YouTube"
+    author_id = _youtube_renderer_author_id(renderer)
     text = clean_text(renderer.get("message"))
     if not text:
         text = clean_text(renderer.get("headerSubtext"))
@@ -244,8 +245,8 @@ def _message_from_renderer(item: dict[str, Any], language: str = "en") -> ChatMe
         platform="youtube",
         author=author,
         text=text,
+        author_id=author_id,
         timestamp=parse_timestamp_usec(renderer.get("timestampUsec")),
-        author_colour="#FF5C6C",
         badges=tuple(badges),
         amount=clean_text(renderer.get("purchaseAmountText")),
         message_id=str(renderer.get("id") or ""),
@@ -304,13 +305,21 @@ def official_message_from_item(item: dict[str, Any], language: str = "en") -> Ch
         platform="youtube",
         author=clean_text(author_details.get("displayName")) or "YouTube",
         text=text,
+        author_id=str(author_details.get("channelId") or ""),
         timestamp=timestamp,
-        author_colour="#FF5C6C",
         badges=tuple(badges),
         amount=amount,
         message_id=str(item.get("id") or ""),
         kind=kind,
     )
+
+
+def _youtube_renderer_author_id(renderer: dict[str, Any]) -> str:
+    external_id = renderer.get("authorExternalChannelId")
+    if isinstance(external_id, str) and external_id.strip():
+        return external_id.strip()
+    browse_id = find_first_key(renderer.get("authorName"), "browseId")
+    return browse_id.strip() if isinstance(browse_id, str) else ""
 
 
 class YouTubeProvider(BaseProvider):
