@@ -1,0 +1,602 @@
+from __future__ import annotations
+
+import ctypes
+import logging
+import queue
+import sys
+import time
+from collections import deque
+from pathlib import Path
+
+from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer
+from PySide6.QtGui import QAction, QCloseEvent, QIcon, QKeySequence, QMouseEvent, QShortcut
+from PySide6.QtWidgets import (
+    QApplication,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QMenu,
+    QPushButton,
+    QScrollArea,
+    QSizeGrip,
+    QSystemTrayIcon,
+    QVBoxLayout,
+    QWidget,
+)
+
+from ..events import ProviderEvent
+from ..models import ChatMessage
+from ..providers import TwitchProvider, YouTubeProvider
+from ..providers.base import BaseProvider
+from ..settings import Settings, SettingsStore
+from .message_card import MessageCard
+from .settings_dialog import SettingsDialog
+from .theme import build_stylesheet
+
+
+def resource_path(relative: str) -> Path:
+    root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
+    return root / relative
+
+
+class DragHeader(QFrame):
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._offset: QPoint | None = None
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.LeftButton:
+            window = self.window()
+            self._offset = event.globalPosition().toPoint() - window.pos()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        if self._offset is not None and event.buttons() & Qt.LeftButton:
+            self.window().move(event.globalPosition().toPoint() - self._offset)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        self._offset = None
+        super().mouseReleaseEvent(event)
+
+
+class GlobalHotkeyPoller(QObject):
+    """Small Win32 hotkey poller that works even while the overlay ignores clicks."""
+
+    def __init__(self, callback, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self.callback = callback
+        self._was_down = False
+        self.timer = QTimer(self)
+        self.timer.setInterval(80)
+        self.timer.timeout.connect(self._poll)
+        if sys.platform == "win32":
+            self.timer.start()
+
+    def _poll(self) -> None:
+        user32 = ctypes.windll.user32
+        control = bool(user32.GetAsyncKeyState(0x11) & 0x8000)
+        shift = bool(user32.GetAsyncKeyState(0x10) & 0x8000)
+        letter_o = bool(user32.GetAsyncKeyState(0x4F) & 0x8000)
+        is_down = control and shift and letter_o
+        if is_down and not self._was_down:
+            self.callback()
+        self._was_down = is_down
+
+
+class OverlayWindow(QMainWindow):
+    def __init__(
+        self,
+        settings: Settings,
+        store: SettingsStore,
+        logger: logging.Logger,
+    ) -> None:
+        super().__init__()
+        self.settings = settings
+        self.store = store
+        self.log = logger
+        self.events: queue.Queue[ProviderEvent] = queue.Queue()
+        self.providers: list[BaseProvider] = []
+        self.messages: list[ChatMessage] = []
+        self.cards: list[MessageCard] = []
+        self.cards_by_id: dict[str, MessageCard] = {}
+        self.seen_ids: set[str] = set()
+        self.seen_order: deque[str] = deque(maxlen=5_000)
+        self.status_labels: dict[str, QLabel] = {}
+        self._shutting_down = False
+        self._first_lock_notice = True
+
+        flags = Qt.FramelessWindowHint
+        if settings.always_on_top:
+            flags |= Qt.WindowStaysOnTopHint
+        self.setWindowFlags(flags)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setMinimumSize(300, 240)
+        self.setWindowTitle("Sindrome Chat Overlay")
+        icon_path = resource_path("assets/icon.png")
+        if not icon_path.exists():
+            icon_path = resource_path("assets/icon.svg")
+        icon = QIcon(str(icon_path))
+        self.setWindowIcon(icon)
+
+        self._build_ui()
+        self._build_tray(icon)
+        self._restore_geometry()
+        self._apply_visual_settings()
+
+        self.event_timer = QTimer(self)
+        self.event_timer.setInterval(60)
+        self.event_timer.timeout.connect(self._drain_events)
+        self.event_timer.start()
+
+        self.expiry_timer = QTimer(self)
+        self.expiry_timer.setInterval(1_000)
+        self.expiry_timer.timeout.connect(self._expire_messages)
+        self.expiry_timer.start()
+
+        self.hotkey_poller = GlobalHotkeyPoller(self.toggle_click_through, self)
+        shortcut = QShortcut(QKeySequence("Ctrl+Shift+O"), self)
+        shortcut.activated.connect(self.toggle_click_through)
+        self._shortcut = shortcut
+
+        self._restart_providers()
+        QTimer.singleShot(150, lambda: self.set_click_through(self.settings.click_through))
+
+    def _build_ui(self) -> None:
+        root = QFrame()
+        root.setObjectName("OverlayRoot")
+        self.setCentralWidget(root)
+        layout = QVBoxLayout(root)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        self.header = DragHeader()
+        self.header.setObjectName("Header")
+        header_layout = QHBoxLayout(self.header)
+        header_layout.setContentsMargins(10, 7, 7, 7)
+        header_layout.setSpacing(6)
+
+        title_area = QVBoxLayout()
+        title_area.setSpacing(1)
+        title = QLabel("Sindrome Chat Overlay")
+        title.setObjectName("AppTitle")
+        title_area.addWidget(title)
+
+        statuses = QHBoxLayout()
+        statuses.setSpacing(9)
+        for platform, label in (("twitch", "Twitch"), ("youtube", "YouTube")):
+            status = QLabel(f"● {label}: iniciando")
+            status.setObjectName("StatusLabel")
+            self.status_labels[platform] = status
+            statuses.addWidget(status)
+        statuses.addStretch(1)
+        title_area.addLayout(statuses)
+        header_layout.addLayout(title_area, 1)
+
+        clear_button = self._header_button("⌫", "Limpar mensagens")
+        clear_button.clicked.connect(self.clear_messages)
+        header_layout.addWidget(clear_button)
+
+        settings_button = self._header_button("⚙", "Abrir configurações")
+        settings_button.clicked.connect(self.open_settings)
+        header_layout.addWidget(settings_button)
+
+        self.lock_button = self._header_button("🔓", "Bloquear cliques (Ctrl+Shift+O)")
+        self.lock_button.clicked.connect(self.toggle_click_through)
+        header_layout.addWidget(self.lock_button)
+
+        close_button = QPushButton("×")
+        close_button.setObjectName("CloseButton")
+        close_button.setToolTip("Fechar")
+        close_button.clicked.connect(self.close)
+        header_layout.addWidget(close_button)
+        layout.addWidget(self.header)
+
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.scroll.viewport().installEventFilter(self)
+        self.message_host = QWidget()
+        self.message_layout = QVBoxLayout(self.message_host)
+        self.message_layout.setContentsMargins(8, 8, 8, 8)
+        self.message_layout.setSpacing(7)
+
+        self.empty_state = QLabel(
+            "Aguardando mensagens…\n\n"
+            "Twitch e YouTube aparecerão juntos aqui.\n"
+            "Ctrl + Shift + O bloqueia ou libera os cliques."
+        )
+        self.empty_state.setObjectName("EmptyState")
+        self.empty_state.setAlignment(Qt.AlignCenter)
+        self.empty_state.setWordWrap(True)
+        self.message_layout.addWidget(self.empty_state)
+        self.message_layout.addStretch(1)
+        self.scroll.setWidget(self.message_host)
+        self.scroll.verticalScrollBar().rangeChanged.connect(self._on_scroll_range_changed)
+        layout.addWidget(self.scroll, 1)
+
+        grip_row = QHBoxLayout()
+        grip_row.setContentsMargins(0, 0, 3, 3)
+        grip_row.addStretch(1)
+        self.size_grip = QSizeGrip(root)
+        grip_row.addWidget(self.size_grip)
+        layout.addLayout(grip_row)
+
+    @staticmethod
+    def _header_button(text: str, tooltip: str) -> QPushButton:
+        button = QPushButton(text)
+        button.setObjectName("HeaderButton")
+        button.setToolTip(tooltip)
+        return button
+
+    def _build_tray(self, icon: QIcon) -> None:
+        self.tray: QSystemTrayIcon | None = None
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            return
+        tray = QSystemTrayIcon(icon, self)
+        tray.setToolTip("Sindrome Chat Overlay")
+        menu = QMenu()
+
+        show_action = QAction("Mostrar / ocultar", self)
+        show_action.triggered.connect(self.toggle_visibility)
+        menu.addAction(show_action)
+
+        self.tray_lock_action = QAction("Bloquear cliques", self)
+        self.tray_lock_action.triggered.connect(self.toggle_click_through)
+        menu.addAction(self.tray_lock_action)
+
+        settings_action = QAction("Configurações", self)
+        settings_action.triggered.connect(self._settings_from_tray)
+        menu.addAction(settings_action)
+        menu.addSeparator()
+
+        quit_action = QAction("Sair", self)
+        quit_action.triggered.connect(self.close)
+        menu.addAction(quit_action)
+
+        tray.setContextMenu(menu)
+        tray.activated.connect(
+            lambda reason: (
+                self.toggle_visibility() if reason == QSystemTrayIcon.DoubleClick else None
+            )
+        )
+        tray.show()
+        self.tray = tray
+
+    def _restore_geometry(self) -> None:
+        self.resize(self.settings.window_width, self.settings.window_height)
+        self.move(self.settings.window_x, self.settings.window_y)
+        visible = any(
+            screen.availableGeometry()
+            .adjusted(-80, -80, 80, 80)
+            .contains(self.frameGeometry().center())
+            for screen in QApplication.screens()
+        )
+        if not visible:
+            screen = QApplication.primaryScreen()
+            if screen:
+                area = screen.availableGeometry()
+                self.move(area.left() + 30, area.top() + 60)
+
+    def _remember_geometry(self) -> None:
+        if self.isMaximized() or self.isMinimized():
+            return
+        self.settings.window_x = self.x()
+        self.settings.window_y = self.y()
+        self.settings.window_width = self.width()
+        self.settings.window_height = self.height()
+
+    def _restart_providers(self) -> None:
+        for provider in self.providers:
+            provider.stop()
+        self.providers.clear()
+        # Old workers keep their old queue, so late shutdown events cannot overwrite new status.
+        self.events = queue.Queue()
+
+        if self.settings.twitch_enabled:
+            provider = TwitchProvider(self.events, self.settings.twitch_channel)
+            self.providers.append(provider)
+            provider.start()
+        else:
+            self._set_status("twitch", "disabled", "desativado")
+
+        if self.settings.youtube_enabled:
+            provider = YouTubeProvider(
+                self.events,
+                self.settings.youtube_input,
+                self.settings.youtube_api_key,
+            )
+            self.providers.append(provider)
+            provider.start()
+        else:
+            self._set_status("youtube", "disabled", "desativado")
+
+    def _drain_events(self) -> None:
+        for _ in range(100):
+            try:
+                event = self.events.get_nowait()
+            except queue.Empty:
+                break
+            if event.kind == "message" and event.message is not None:
+                self.add_message(event.message)
+            elif event.kind == "status":
+                self._set_status(event.platform, event.state, event.text)
+            elif event.kind == "delete" and event.message_id:
+                self._remove_message_id(event.message_id)
+            elif event.kind == "clear":
+                self.clear_messages(event.platform)
+
+    def add_message(self, message: ChatMessage) -> None:
+        if self.settings.hide_commands and message.text.lstrip().startswith("!"):
+            return
+        if message.message_id and message.message_id in self.seen_ids:
+            return
+        if message.message_id:
+            if len(self.seen_order) == self.seen_order.maxlen:
+                oldest = self.seen_order.popleft()
+                self.seen_ids.discard(oldest)
+            self.seen_order.append(message.message_id)
+            self.seen_ids.add(message.message_id)
+        self.messages.append(message)
+        self._append_card(message)
+        self._trim_messages()
+        self._play_message_sound()
+
+    def _append_card(self, message: ChatMessage) -> None:
+        self.empty_state.hide()
+        card = MessageCard(message, self.settings, self.message_host)
+        self.cards.append(card)
+        if message.message_id:
+            self.cards_by_id[message.message_id] = card
+        self.message_layout.insertWidget(self.message_layout.count() - 1, card)
+        if self.settings.auto_scroll:
+            QTimer.singleShot(0, self._scroll_to_bottom)
+            # Word wrapping may change the scroll range after the first layout pass.
+            QTimer.singleShot(75, self._scroll_to_bottom)
+
+    def _scroll_to_bottom(self) -> None:
+        if not self.settings.auto_scroll:
+            return
+        bar = self.scroll.verticalScrollBar()
+        bar.setValue(bar.maximum())
+
+    def _on_scroll_range_changed(self, _minimum: int, maximum: int) -> None:
+        if self.settings.auto_scroll:
+            self.scroll.verticalScrollBar().setValue(maximum)
+
+    def _play_message_sound(self) -> None:
+        if not self.settings.sound_enabled:
+            return
+        if sys.platform == "win32":
+            try:
+                import winsound
+
+                sound_path = resource_path("assets/message.wav")
+                if sound_path.exists():
+                    winsound.PlaySound(
+                        str(sound_path),
+                        winsound.SND_ASYNC | winsound.SND_FILENAME | winsound.SND_NODEFAULT,
+                    )
+                else:
+                    winsound.MessageBeep(winsound.MB_OK)
+            except (OSError, RuntimeError) as exc:
+                self.log.debug("Unable to play message sound: %s", exc)
+        else:
+            QApplication.beep()
+
+    def _trim_messages(self) -> None:
+        while len(self.messages) > self.settings.max_messages:
+            self._remove_at(0)
+
+    def _expire_messages(self) -> None:
+        lifetime = self.settings.message_lifetime_seconds
+        if lifetime <= 0:
+            return
+        now = time.monotonic()
+        while self.cards and now - self.cards[0].created_monotonic >= lifetime:
+            self._remove_at(0)
+
+    def _remove_message_id(self, message_id: str) -> None:
+        card = self.cards_by_id.get(message_id)
+        if card is None:
+            return
+        try:
+            index = self.cards.index(card)
+        except ValueError:
+            return
+        self._remove_at(index)
+
+    def _remove_at(self, index: int) -> None:
+        if index < 0 or index >= len(self.cards):
+            return
+        card = self.cards.pop(index)
+        message = self.messages.pop(index)
+        if message.message_id:
+            self.cards_by_id.pop(message.message_id, None)
+        self.message_layout.removeWidget(card)
+        card.deleteLater()
+        self.empty_state.setVisible(not self.cards)
+
+    def clear_messages(self, platform: str = "") -> None:
+        if not platform:
+            while self.cards:
+                self._remove_at(len(self.cards) - 1)
+            return
+        for index in range(len(self.messages) - 1, -1, -1):
+            if self.messages[index].platform == platform:
+                self._remove_at(index)
+
+    def _rebuild_cards(self) -> None:
+        history = list(self.messages)
+        while self.cards:
+            card = self.cards.pop()
+            self.message_layout.removeWidget(card)
+            card.deleteLater()
+        self.cards_by_id.clear()
+        self.messages = []
+        for message in history[-self.settings.max_messages :]:
+            if self.settings.hide_commands and message.text.lstrip().startswith("!"):
+                continue
+            self.messages.append(message)
+            self._append_card(message)
+        self.empty_state.setVisible(not self.cards)
+
+    def _set_status(self, platform: str, state: str, text: str) -> None:
+        label = self.status_labels.get(platform)
+        if label is None:
+            return
+        names = {"twitch": "Twitch", "youtube": "YouTube"}
+        colours = {
+            "connected": "#4BE09A",
+            "connecting": "#F5C451",
+            "waiting": "#F5C451",
+            "error": "#FF6477",
+            "stopped": "#7D899E",
+            "disabled": "#7D899E",
+        }
+        colour = colours.get(state, "#AAB5CB")
+        label.setText(f"● {names.get(platform, platform)}: {text}")
+        label.setStyleSheet(f"color: {colour}; font-size: 11px;")
+
+    def open_settings(self) -> None:
+        if self.settings.click_through:
+            self.set_click_through(False)
+        dialog = SettingsDialog(self.settings, self)
+        dialog.setStyleSheet(build_stylesheet(self.settings))
+        if dialog.exec() != SettingsDialog.Accepted:
+            return
+        self._remember_geometry()
+        updated = dialog.settings()
+        updated.window_x = self.settings.window_x
+        updated.window_y = self.settings.window_y
+        updated.window_width = self.settings.window_width
+        updated.window_height = self.settings.window_height
+        self.settings = updated
+        self.store.save(self.settings)
+        self._apply_window_flags()
+        self._apply_visual_settings()
+        self._rebuild_cards()
+        self._restart_providers()
+        self.set_click_through(self.settings.click_through)
+
+    def _settings_from_tray(self) -> None:
+        if not self.isVisible():
+            self.show()
+        self.set_click_through(False)
+        self.raise_()
+        self.activateWindow()
+        self.open_settings()
+
+    def _apply_visual_settings(self) -> None:
+        self.setStyleSheet(build_stylesheet(self.settings))
+
+    def _apply_window_flags(self) -> None:
+        was_visible = self.isVisible()
+        flags = self.windowFlags()
+        if self.settings.always_on_top:
+            flags |= Qt.WindowStaysOnTopHint
+        else:
+            flags &= ~Qt.WindowStaysOnTopHint
+        self.setWindowFlags(flags)
+        if was_visible:
+            self.show()
+
+    def toggle_click_through(self) -> None:
+        self.set_click_through(not self.settings.click_through)
+
+    def set_click_through(self, enabled: bool) -> None:
+        self.settings.click_through = bool(enabled)
+        self.header.setVisible(not enabled)
+        self.size_grip.setVisible(not enabled)
+        self.lock_button.setText("🔒" if enabled else "🔓")
+        if hasattr(self, "tray_lock_action"):
+            self.tray_lock_action.setText("Desbloquear cliques" if enabled else "Bloquear cliques")
+        self._set_native_click_through(enabled)
+        try:
+            self._remember_geometry()
+            self.store.save(self.settings)
+        except OSError as exc:
+            self.log.warning("Unable to save lock state: %s", exc)
+        if enabled and self.tray and self._first_lock_notice:
+            self.tray.showMessage(
+                "Overlay bloqueado",
+                "Use Ctrl + Shift + O ou o ícone ao lado do relógio para desbloquear.",
+                QSystemTrayIcon.Information,
+                4_000,
+            )
+            self._first_lock_notice = False
+
+    def _set_native_click_through(self, enabled: bool) -> None:
+        if sys.platform != "win32":
+            was_visible = self.isVisible()
+            self.setWindowFlag(Qt.WindowTransparentForInput, enabled)
+            if was_visible:
+                self.show()
+            return
+        try:
+            user32 = ctypes.windll.user32
+            hwnd = int(self.winId())
+            get_style = getattr(user32, "GetWindowLongPtrW", user32.GetWindowLongW)
+            set_style = getattr(user32, "SetWindowLongPtrW", user32.SetWindowLongW)
+            gwl_exstyle = -20
+            ws_ex_transparent = 0x00000020
+            ws_ex_layered = 0x00080000
+            ws_ex_noactivate = 0x08000000
+            style = get_style(hwnd, gwl_exstyle)
+            if enabled:
+                style |= ws_ex_transparent | ws_ex_layered | ws_ex_noactivate
+            else:
+                style &= ~ws_ex_transparent
+                style &= ~ws_ex_noactivate
+            set_style(hwnd, gwl_exstyle, style)
+            user32.SetWindowPos(
+                hwnd,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0x0001 | 0x0002 | 0x0004 | 0x0020,
+            )
+        except Exception as exc:  # noqa: BLE001 - best-effort Win32 integration
+            self.log.warning("Unable to change click-through state: %s", exc)
+
+    def toggle_visibility(self) -> None:
+        if self.isVisible():
+            self.hide()
+        else:
+            self.show()
+            if not self.settings.click_through:
+                self.raise_()
+                self.activateWindow()
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if watched is self.scroll.viewport() and event.type() == QEvent.MouseButtonDblClick:
+            self.toggle_click_through()
+            return True
+        return super().eventFilter(watched, event)
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        if self._shutting_down:
+            event.accept()
+            return
+        self._shutting_down = True
+        self._remember_geometry()
+        try:
+            self.store.save(self.settings)
+        except OSError as exc:
+            self.log.warning("Unable to save settings on close: %s", exc)
+        for provider in self.providers:
+            provider.stop()
+        self.providers.clear()
+        if self.tray:
+            self.tray.hide()
+        event.accept()
+        app = QApplication.instance()
+        if app:
+            QTimer.singleShot(0, app.quit)
