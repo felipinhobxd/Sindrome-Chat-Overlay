@@ -1,11 +1,11 @@
 @echo off
 setlocal EnableExtensions
-title Gerar Sindrome Chat Overlay.exe
+title Build Sindrome Chat Overlay.exe
 cd /d "%~dp0"
 
 echo.
 echo ============================================================
-echo          SINDROME CHAT OVERLAY - GERADOR DO EXE
+echo          SINDROME CHAT OVERLAY - EXE BUILDER
 echo ============================================================
 echo.
 
@@ -19,42 +19,42 @@ if not errorlevel 1 (
 )
 
 if not exist ".venv\Scripts\python.exe" (
-    echo [1/5] Criando ambiente Python isolado...
+    echo [1/5] Creating an isolated Python environment...
     %PY_CMD% -m venv .venv
     if errorlevel 1 goto :failed
 ) else (
-    echo [1/5] Ambiente Python ja existe.
+    echo [1/5] The Python environment already exists.
 )
 
 call ".venv\Scripts\activate.bat"
 if errorlevel 1 goto :failed
 
-echo [2/5] Atualizando as ferramentas de instalacao...
+echo [2/5] Updating installation tools...
 python -m pip install --disable-pip-version-check --upgrade pip wheel
 if errorlevel 1 goto :failed
 
-echo [3/5] Instalando dependencias do aplicativo e do gerador...
+echo [3/5] Installing application and build dependencies...
 python -m pip install --disable-pip-version-check -r requirements.txt -r requirements-build.txt
 if errorlevel 1 goto :failed
 
-echo [4/5] Gerando o icone e o som de mensagem...
+echo [4/5] Generating the application icon and message sound...
 python tools\create_icon.py
 if errorlevel 1 goto :failed
 python tools\create_sound.py
 if errorlevel 1 goto :failed
 
-echo [5/5] Montando o arquivo .exe. Isto pode demorar alguns minutos...
+echo [5/5] Building the executable. This may take a few minutes...
 python -m PyInstaller --noconfirm --clean SindromeChatOverlay.spec
 if errorlevel 1 goto :failed
 
-copy /Y "README.md" "dist\LEIA-ME.md" >nul
+copy /Y "README.md" "dist\README.md" >nul
 copy /Y "THIRD_PARTY_NOTICES.md" "dist\THIRD_PARTY_NOTICES.md" >nul
 copy /Y "LICENSE" "dist\LICENSE.txt" >nul
 
 echo.
 echo ============================================================
-echo  PRONTO!
-echo  Arquivo: %CD%\dist\SindromeChatOverlay.exe
+echo  COMPLETE
+echo  File: %CD%\dist\SindromeChatOverlay.exe
 echo ============================================================
 echo.
 explorer "%CD%\dist"
@@ -62,16 +62,16 @@ pause
 exit /b 0
 
 :python_missing
-echo [ERRO] Python nao foi encontrado.
-echo Instale o Python 3.12 de 64 bits e marque "Add Python to PATH":
+echo [ERROR] Python was not found.
+echo Install 64-bit Python 3.12 and enable "Add Python to PATH":
 echo https://www.python.org/downloads/windows/
-echo Depois execute este arquivo novamente.
+echo Then run this file again.
 pause
 exit /b 1
 
 :failed
 echo.
-echo [ERRO] Nao foi possivel gerar o .exe.
-echo Confira a mensagem acima e o arquivo README.md.
+echo [ERROR] The executable could not be built.
+echo Review the message above and README.md.
 pause
 exit /b 1

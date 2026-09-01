@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..events import ProviderEvent
+from ..i18n import tr
 from ..models import ChatMessage
 from ..providers import TwitchProvider, YouTubeProvider
 from ..providers.base import BaseProvider
@@ -126,6 +127,7 @@ class OverlayWindow(QMainWindow):
 
         self._build_ui()
         self._build_tray(icon)
+        self._retranslate_ui(reset_statuses=True)
         self._restore_geometry()
         self._apply_visual_settings()
 
@@ -163,14 +165,14 @@ class OverlayWindow(QMainWindow):
 
         title_area = QVBoxLayout()
         title_area.setSpacing(1)
-        title = QLabel("Sindrome Chat Overlay")
-        title.setObjectName("AppTitle")
-        title_area.addWidget(title)
+        self.title_label = QLabel("Sindrome Chat Overlay")
+        self.title_label.setObjectName("AppTitle")
+        title_area.addWidget(self.title_label)
 
         statuses = QHBoxLayout()
         statuses.setSpacing(9)
         for platform, label in (("twitch", "Twitch"), ("youtube", "YouTube")):
-            status = QLabel(f"● {label}: iniciando")
+            status = QLabel(f"● {label}")
             status.setObjectName("StatusLabel")
             self.status_labels[platform] = status
             statuses.addWidget(status)
@@ -178,23 +180,22 @@ class OverlayWindow(QMainWindow):
         title_area.addLayout(statuses)
         header_layout.addLayout(title_area, 1)
 
-        clear_button = self._header_button("⌫", "Limpar mensagens")
-        clear_button.clicked.connect(self.clear_messages)
-        header_layout.addWidget(clear_button)
+        self.clear_button = self._header_button("⌫", "")
+        self.clear_button.clicked.connect(self.clear_messages)
+        header_layout.addWidget(self.clear_button)
 
-        settings_button = self._header_button("⚙", "Abrir configurações")
-        settings_button.clicked.connect(self.open_settings)
-        header_layout.addWidget(settings_button)
+        self.settings_button = self._header_button("⚙", "")
+        self.settings_button.clicked.connect(self.open_settings)
+        header_layout.addWidget(self.settings_button)
 
-        self.lock_button = self._header_button("🔓", "Bloquear cliques (Ctrl+Shift+O)")
+        self.lock_button = self._header_button("🔓", "")
         self.lock_button.clicked.connect(self.toggle_click_through)
         header_layout.addWidget(self.lock_button)
 
-        close_button = QPushButton("×")
-        close_button.setObjectName("CloseButton")
-        close_button.setToolTip("Fechar")
-        close_button.clicked.connect(self.close)
-        header_layout.addWidget(close_button)
+        self.close_button = QPushButton("×")
+        self.close_button.setObjectName("CloseButton")
+        self.close_button.clicked.connect(self.close)
+        header_layout.addWidget(self.close_button)
         layout.addWidget(self.header)
 
         self.scroll = QScrollArea()
@@ -206,11 +207,7 @@ class OverlayWindow(QMainWindow):
         self.message_layout.setContentsMargins(8, 8, 8, 8)
         self.message_layout.setSpacing(7)
 
-        self.empty_state = QLabel(
-            "Aguardando mensagens…\n\n"
-            "Twitch e YouTube aparecerão juntos aqui.\n"
-            "Ctrl + Shift + O bloqueia ou libera os cliques."
-        )
+        self.empty_state = QLabel()
         self.empty_state.setObjectName("EmptyState")
         self.empty_state.setAlignment(Qt.AlignCenter)
         self.empty_state.setWordWrap(True)
@@ -242,22 +239,22 @@ class OverlayWindow(QMainWindow):
         tray.setToolTip("Sindrome Chat Overlay")
         menu = QMenu()
 
-        show_action = QAction("Mostrar / ocultar", self)
-        show_action.triggered.connect(self.toggle_visibility)
-        menu.addAction(show_action)
+        self.show_action = QAction(self)
+        self.show_action.triggered.connect(self.toggle_visibility)
+        menu.addAction(self.show_action)
 
-        self.tray_lock_action = QAction("Bloquear cliques", self)
+        self.tray_lock_action = QAction(self)
         self.tray_lock_action.triggered.connect(self.toggle_click_through)
         menu.addAction(self.tray_lock_action)
 
-        settings_action = QAction("Configurações", self)
-        settings_action.triggered.connect(self._settings_from_tray)
-        menu.addAction(settings_action)
+        self.settings_action = QAction(self)
+        self.settings_action.triggered.connect(self._settings_from_tray)
+        menu.addAction(self.settings_action)
         menu.addSeparator()
 
-        quit_action = QAction("Sair", self)
-        quit_action.triggered.connect(self.close)
-        menu.addAction(quit_action)
+        self.quit_action = QAction(self)
+        self.quit_action.triggered.connect(self.close)
+        menu.addAction(self.quit_action)
 
         tray.setContextMenu(menu)
         tray.activated.connect(
@@ -267,6 +264,32 @@ class OverlayWindow(QMainWindow):
         )
         tray.show()
         self.tray = tray
+
+    def _text(self, key: str, **values) -> str:
+        return tr(self.settings.language, key, **values)
+
+    def _retranslate_ui(self, *, reset_statuses: bool = False) -> None:
+        self.clear_button.setToolTip(self._text("clear_messages"))
+        self.settings_button.setToolTip(self._text("open_settings"))
+        self.close_button.setToolTip(self._text("close"))
+        self.empty_state.setText(self._text("empty_state"))
+        lock_key = "unlock_clicks" if self.settings.click_through else "lock_clicks"
+        self.lock_button.setToolTip(self._text(lock_key))
+
+        if reset_statuses:
+            for platform in ("twitch", "youtube"):
+                self._set_status(platform, "connecting", self._text("initializing"))
+
+        if self.tray is not None:
+            self.tray.setToolTip("Sindrome Chat Overlay")
+            self.show_action.setText(self._text("show_hide"))
+            self.settings_action.setText(self._text("settings"))
+            self.quit_action.setText(self._text("quit"))
+            self.tray_lock_action.setText(
+                self._text("unlock_clicks")
+                if self.settings.click_through
+                else self._text("lock_clicks")
+            )
 
     def _restore_geometry(self) -> None:
         self.resize(self.settings.window_width, self.settings.window_height)
@@ -299,22 +322,27 @@ class OverlayWindow(QMainWindow):
         self.events = queue.Queue()
 
         if self.settings.twitch_enabled:
-            provider = TwitchProvider(self.events, self.settings.twitch_channel)
+            provider = TwitchProvider(
+                self.events,
+                self.settings.twitch_channel,
+                self.settings.language,
+            )
             self.providers.append(provider)
             provider.start()
         else:
-            self._set_status("twitch", "disabled", "desativado")
+            self._set_status("twitch", "disabled", self._text("disabled"))
 
         if self.settings.youtube_enabled:
             provider = YouTubeProvider(
                 self.events,
                 self.settings.youtube_input,
                 self.settings.youtube_api_key,
+                self.settings.language,
             )
             self.providers.append(provider)
             provider.start()
         else:
-            self._set_status("youtube", "disabled", "desativado")
+            self._set_status("youtube", "disabled", self._text("disabled"))
 
     def _drain_events(self) -> None:
         for _ in range(100):
@@ -480,6 +508,7 @@ class OverlayWindow(QMainWindow):
         self.store.save(self.settings)
         self._apply_window_flags()
         self._apply_visual_settings()
+        self._retranslate_ui(reset_statuses=True)
         self._rebuild_cards()
         self._restart_providers()
         self.set_click_through(self.settings.click_through)
@@ -514,8 +543,13 @@ class OverlayWindow(QMainWindow):
         self.header.setVisible(not enabled)
         self.size_grip.setVisible(not enabled)
         self.lock_button.setText("🔒" if enabled else "🔓")
+        self.lock_button.setToolTip(
+            self._text("unlock_clicks") if enabled else self._text("lock_clicks")
+        )
         if hasattr(self, "tray_lock_action"):
-            self.tray_lock_action.setText("Desbloquear cliques" if enabled else "Bloquear cliques")
+            self.tray_lock_action.setText(
+                self._text("unlock_clicks") if enabled else self._text("lock_clicks")
+            )
         self._set_native_click_through(enabled)
         try:
             self._remember_geometry()
@@ -524,8 +558,8 @@ class OverlayWindow(QMainWindow):
             self.log.warning("Unable to save lock state: %s", exc)
         if enabled and self.tray and self._first_lock_notice:
             self.tray.showMessage(
-                "Overlay bloqueado",
-                "Use Ctrl + Shift + O ou o ícone ao lado do relógio para desbloquear.",
+                self._text("locked_title"),
+                self._text("locked_message"),
                 QSystemTrayIcon.Information,
                 4_000,
             )

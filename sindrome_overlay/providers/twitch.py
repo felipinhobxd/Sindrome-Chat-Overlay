@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from queue import Queue
 
 from ..events import ProviderEvent
+from ..i18n import normalize_language, tr
 from ..models import ChatMessage
 from ..url_utils import normalize_twitch_channel
 from .base import BaseProvider
@@ -34,7 +35,7 @@ def parse_irc_tags(raw: str) -> dict[str, str]:
     return tags
 
 
-def parse_twitch_line(line: str) -> tuple[str, ChatMessage | str | None]:
+def parse_twitch_line(line: str, language: str = "en") -> tuple[str, ChatMessage | str | None]:
     tags: dict[str, str] = {}
     rest = line
     if rest.startswith("@"):
@@ -72,7 +73,7 @@ def parse_twitch_line(line: str) -> tuple[str, ChatMessage | str | None]:
 
     command = rest.split(" ", 2)[1] if rest.startswith(":") and " " in rest else ""
     if command == "USERNOTICE" or " USERNOTICE " in rest:
-        text = tags.get("system-msg", "Evento da Twitch")
+        text = tags.get("system-msg", tr(language, "twitch_event"))
         author = tags.get("display-name") or tags.get("login") or "Twitch"
         return (
             "message",
@@ -107,9 +108,10 @@ def parse_twitch_line(line: str) -> tuple[str, ChatMessage | str | None]:
 class TwitchProvider(BaseProvider):
     platform = "twitch"
 
-    def __init__(self, events: Queue[ProviderEvent], channel: str) -> None:
+    def __init__(self, events: Queue[ProviderEvent], channel: str, language: str = "en") -> None:
         super().__init__(events)
-        self.channel = normalize_twitch_channel(channel)
+        self.language = normalize_language(language)
+        self.channel = normalize_twitch_channel(channel, self.language)
         self._socket: ssl.SSLSocket | None = None
 
     def stop(self) -> None:
@@ -135,14 +137,17 @@ class TwitchProvider(BaseProvider):
                 if self.stop_event.is_set():
                     break
                 self.log.warning("Twitch reconnect: %s", exc)
-                self.emit_status("waiting", f"Reconectando em {int(delay)}s")
+                self.emit_status(
+                    "waiting",
+                    tr(self.language, "reconnecting", seconds=int(delay)),
+                )
                 if self.wait(delay):
                     break
                 delay = min(delay * 2, 30.0)
-        self.emit_status("stopped", "Desconectado")
+        self.emit_status("stopped", tr(self.language, "disconnected"))
 
     def _listen(self) -> None:
-        self.emit_status("connecting", "Conectando…")
+        self.emit_status("connecting", tr(self.language, "connecting"))
         raw_socket = socket.create_connection(
             ("irc.chat.twitch.tv", 6697),
             timeout=15,
@@ -167,17 +172,17 @@ class TwitchProvider(BaseProvider):
                 except TimeoutError:
                     continue
                 if not chunk:
-                    raise ConnectionError("A Twitch encerrou a conexão.")
+                    raise ConnectionError("Twitch closed the connection.")
                 buffer += chunk.decode("utf-8", "replace")
                 lines = buffer.split("\r\n")
                 buffer = lines.pop()
                 for line in lines:
-                    kind, payload = parse_twitch_line(line)
+                    kind, payload = parse_twitch_line(line, self.language)
                     if kind == "ping":
                         self._send(f"PONG {payload}")
                     elif kind == "message" and isinstance(payload, ChatMessage):
                         if not announced:
-                            self.emit_status("connected", "Ao vivo")
+                            self.emit_status("connected", tr(self.language, "live"))
                             announced = True
                         self.emit_message(payload)
                     elif kind == "delete" and isinstance(payload, str):
@@ -185,14 +190,14 @@ class TwitchProvider(BaseProvider):
                     elif kind == "clear":
                         self.emit_clear()
                     elif kind == "ready" and not announced:
-                        self.emit_status("connected", "Conectado")
+                        self.emit_status("connected", tr(self.language, "connected"))
                         announced = True
                     elif kind == "notice" and isinstance(payload, str):
                         if "authentication failed" in payload.lower():
                             raise PermissionError(payload)
                         self.log.info("Twitch notice: %s", payload)
                     elif kind == "reconnect":
-                        raise ConnectionError("Reconexão solicitada pela Twitch.")
+                        raise ConnectionError("Twitch requested a reconnect.")
         finally:
             self._socket = None
             try:

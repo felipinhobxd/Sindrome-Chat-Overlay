@@ -110,7 +110,25 @@ class YouTubeParserTests(unittest.TestCase):
         message = official_message_from_item(item)
         self.assertIsNotNone(message)
         self.assertEqual(message.message_id, "official-1")
-        self.assertEqual(message.badges, ("DONO", "MEMBRO"))
+        self.assertEqual(message.badges, ("OWNER", "MEMBER"))
+
+    def test_generated_event_text_uses_the_selected_language(self) -> None:
+        actions = [
+            {
+                "addChatItemAction": {
+                    "item": {
+                        "liveChatMembershipItemRenderer": {
+                            "id": "member-1",
+                            "authorName": {"simpleText": "Supporter"},
+                        }
+                    }
+                }
+            }
+        ]
+        english, _ = youtube_messages_from_actions(actions, "en")
+        portuguese, _ = youtube_messages_from_actions(actions, "pt-BR")
+        self.assertEqual(english[0].text, "Became a channel member")
+        self.assertEqual(portuguese[0].text, "Tornou-se membro do canal")
 
 
 if __name__ == "__main__":

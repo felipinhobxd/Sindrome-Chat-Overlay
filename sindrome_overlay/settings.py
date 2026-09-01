@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import Any
 
+from .i18n import normalize_language
 from .url_utils import normalize_twitch_channel, normalize_youtube_input
 
 APP_DIR_NAME = "SindromeChatOverlay"
@@ -21,6 +22,7 @@ def app_data_dir() -> Path:
 
 @dataclass(slots=True)
 class Settings:
+    language: str = "en"
     twitch_enabled: bool = True
     twitch_channel: str = "sindromegames"
     youtube_enabled: bool = True
@@ -44,12 +46,13 @@ class Settings:
     window_height: int = 720
 
     def normalized(self) -> Settings:
+        self.language = normalize_language(self.language)
         if self.twitch_enabled or self.twitch_channel.strip():
-            self.twitch_channel = normalize_twitch_channel(self.twitch_channel)
+            self.twitch_channel = normalize_twitch_channel(self.twitch_channel, self.language)
         else:
             self.twitch_channel = ""
         if self.youtube_enabled or self.youtube_input.strip():
-            self.youtube_input = normalize_youtube_input(self.youtube_input)
+            self.youtube_input = normalize_youtube_input(self.youtube_input, self.language)
         else:
             self.youtube_input = ""
         self.youtube_api_key = self.youtube_api_key.strip()

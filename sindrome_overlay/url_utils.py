@@ -3,24 +3,26 @@ from __future__ import annotations
 import re
 from urllib.parse import parse_qs, urlparse
 
+from .i18n import tr
+
 _VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
 _TWITCH_NAME = re.compile(r"^[A-Za-z0-9_]{3,25}$")
 
 
-def normalize_twitch_channel(value: str) -> str:
+def normalize_twitch_channel(value: str, language: str = "en") -> str:
     raw = value.strip()
     if not raw:
-        raise ValueError("Informe o canal da Twitch.")
+        raise ValueError(tr(language, "error_twitch_required"))
     raw = raw.removeprefix("@").strip()
     if "://" in raw or raw.lower().startswith("www."):
         parsed = urlparse(raw if "://" in raw else f"https://{raw}")
         host = parsed.netloc.lower().removeprefix("www.")
         if host not in {"twitch.tv", "m.twitch.tv"}:
-            raise ValueError("Use um link válido da Twitch.")
+            raise ValueError(tr(language, "error_twitch_url"))
         raw = parsed.path.strip("/").split("/")[0]
     raw = raw.lower()
     if not _TWITCH_NAME.fullmatch(raw):
-        raise ValueError("O nome do canal da Twitch parece inválido.")
+        raise ValueError(tr(language, "error_twitch_name"))
     return raw
 
 
@@ -28,10 +30,10 @@ def twitch_channel_url(value: str) -> str:
     return f"https://www.twitch.tv/{normalize_twitch_channel(value)}"
 
 
-def normalize_youtube_input(value: str) -> str:
+def normalize_youtube_input(value: str, language: str = "en") -> str:
     raw = value.strip()
     if not raw:
-        raise ValueError("Informe o canal ou vídeo do YouTube.")
+        raise ValueError(tr(language, "error_youtube_required"))
 
     if _VIDEO_ID.fullmatch(raw):
         return f"https://www.youtube.com/watch?v={raw}"
@@ -48,15 +50,15 @@ def normalize_youtube_input(value: str) -> str:
     if host == "youtu.be":
         video_id = parsed.path.strip("/").split("/")[0]
         if not _VIDEO_ID.fullmatch(video_id):
-            raise ValueError("O link curto do YouTube parece inválido.")
+            raise ValueError(tr(language, "error_youtube_short_url"))
         return f"https://www.youtube.com/watch?v={video_id}"
     if host not in {"youtube.com", "m.youtube.com"}:
-        raise ValueError("Use um link válido do YouTube.")
+        raise ValueError(tr(language, "error_youtube_url"))
 
     if parsed.path == "/watch":
         video_id = parse_qs(parsed.query).get("v", [""])[0]
         if not _VIDEO_ID.fullmatch(video_id):
-            raise ValueError("O link do vídeo do YouTube parece inválido.")
+            raise ValueError(tr(language, "error_youtube_video_url"))
         return f"https://www.youtube.com/watch?v={video_id}"
     if parsed.path.startswith("/live/"):
         video_id = parsed.path.split("/")[2]
@@ -65,7 +67,7 @@ def normalize_youtube_input(value: str) -> str:
 
     path = parsed.path.rstrip("/")
     if not path:
-        raise ValueError("Informe um canal específico do YouTube.")
+        raise ValueError(tr(language, "error_youtube_specific_channel"))
     if not path.endswith("/live"):
         path += "/live"
     return f"https://www.youtube.com{path}"

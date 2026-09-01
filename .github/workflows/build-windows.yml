@@ -1,4 +1,4 @@
-name: Gerar EXE e Release do Windows
+name: Build Windows release
 
 on:
   workflow_dispatch:
@@ -12,67 +12,97 @@ jobs:
   build:
     runs-on: windows-latest
     steps:
-      - name: Baixar o projeto
+      - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Preparar Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
 
-      - name: Ler versao do projeto
+      - name: Read project version
         shell: pwsh
         run: |
           $content = Get-Content pyproject.toml -Raw
           if ($content -notmatch '(?m)^version = "([^"]+)"') {
-            throw "Versao nao encontrada em pyproject.toml"
+            throw "Version not found in pyproject.toml"
           }
           $version = $Matches[1]
           "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "RELEASE_TAG=v$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
-      - name: Instalar dependencias
+      - name: Install dependencies
         run: python -m pip install -r requirements.txt -r requirements-build.txt
 
-      - name: Gerar icone
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Generate application icon
         run: python tools/create_icon.py
 
-      - name: Gerar som de mensagem
+      - name: Generate message sound
         run: python tools/create_sound.py
 
-      - name: Gerar EXE
+      - name: Build portable executable
         run: python -m PyInstaller --noconfirm --clean SindromeChatOverlay.spec
 
-      - name: Incluir documentacao
+      - name: Include documentation
         shell: pwsh
         run: |
-          Copy-Item README.md dist/LEIA-ME.md
+          Copy-Item README.md dist/README.md
           Copy-Item THIRD_PARTY_NOTICES.md dist/THIRD_PARTY_NOTICES.md
           Copy-Item LICENSE dist/LICENSE.txt
 
-      - name: Preparar arquivos da versao
+      - name: Build portable archive
         shell: pwsh
         run: |
           $zip = "SindromeChatOverlay-Windows-v$env:VERSION.zip"
           Compress-Archive -Path dist/* -DestinationPath $zip -Force
-          $exeHash = (Get-FileHash dist/SindromeChatOverlay.exe -Algorithm SHA256).Hash.ToLowerInvariant()
-          $zipHash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
-          @(
-            "$exeHash  SindromeChatOverlay.exe"
-            "$zipHash  $zip"
-          ) | Set-Content SHA256SUMS.txt -Encoding ascii
 
-      - name: Publicar artefato
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress --yes
+
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          $compiler = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $compiler)) {
+            throw "Inno Setup compiler was not found at $compiler"
+          }
+          & $compiler "/DAppVersion=$env:VERSION" installer/SindromeChatOverlay.iss
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+      - name: Generate SHA-256 checksums
+        shell: pwsh
+        run: |
+          $zip = "SindromeChatOverlay-Windows-v$env:VERSION.zip"
+          $setup = "release/SindromeChatOverlay-Setup-v$env:VERSION.exe"
+          $files = @(
+            "dist/SindromeChatOverlay.exe",
+            $zip,
+            $setup
+          )
+          $lines = foreach ($file in $files) {
+            $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $([System.IO.Path]::GetFileName($file))"
+          }
+          $lines | Set-Content SHA256SUMS.txt -Encoding ascii
+
+      - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: SindromeChatOverlay-Windows-v${{ env.VERSION }}
           path: |
             dist/*
+            release/SindromeChatOverlay-Setup-v${{ env.VERSION }}.exe
             SindromeChatOverlay-Windows-v${{ env.VERSION }}.zip
             SHA256SUMS.txt
 
-      - name: Publicar no GitHub Releases
+      - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
@@ -81,12 +111,15 @@ jobs:
           make_latest: true
           fail_on_unmatched_files: true
           body: |
-            Overlay transparente para Windows que reúne mensagens ao vivo da Twitch e do YouTube.
+            Sindrome Chat Overlay combines Twitch and YouTube live chat in one transparent Windows overlay.
 
-            A rolagem automática e o som de novas mensagens vêm ativados por padrão e podem ser alterados em Configurações → Aparência.
+            The interface starts in English and can be changed to Brazilian Portuguese under Settings → Language. Automatic scrolling and message sounds are enabled by default.
 
-            Baixe o `.exe` para executar diretamente ou o `.zip` portátil com a documentação completa.
+            **Recommended:** download `SindromeChatOverlay-Setup-v${{ env.VERSION }}.exe` for a standard Windows installation with shortcuts and an uninstaller.
+
+            Portable builds are also available as a standalone `.exe` and a `.zip` archive.
           files: |
+            release/SindromeChatOverlay-Setup-v${{ env.VERSION }}.exe
             dist/SindromeChatOverlay.exe
             SindromeChatOverlay-Windows-v${{ env.VERSION }}.zip
             SHA256SUMS.txt

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sindrome-chat-overlay"
-version = "1.1.0"
-description = "Overlay transparente que une chats ao vivo da Twitch e do YouTube."
+version = "1.2.0"
+description = "Transparent Windows overlay that combines Twitch and YouTube live chat."
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
 license = { text = "MIT" }

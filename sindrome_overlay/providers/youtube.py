@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, urlparse
 import requests
 
 from ..events import ProviderEvent
+from ..i18n import normalize_language, tr
 from ..models import ChatMessage, clean_text, parse_timestamp_usec
 from ..url_utils import normalize_youtube_input, youtube_video_id
 from .base import BaseProvider
@@ -25,7 +26,7 @@ _BROWSER_HEADERS = {
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/131.0.0.0 Safari/537.36"
     ),
-    "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.7,en;q=0.5",
+    "Accept-Language": "en-US,en;q=0.9",
 }
 
 
@@ -159,7 +160,9 @@ def extract_video_id_from_url(value: str) -> str:
     return ""
 
 
-def youtube_messages_from_actions(actions: Iterable[Any]) -> tuple[list[ChatMessage], list[str]]:
+def youtube_messages_from_actions(
+    actions: Iterable[Any], language: str = "en"
+) -> tuple[list[ChatMessage], list[str]]:
     messages: list[ChatMessage] = []
     deletions: list[str] = []
 
@@ -169,7 +172,7 @@ def youtube_messages_from_actions(actions: Iterable[Any]) -> tuple[list[ChatMess
         replay = raw_action.get("replayChatItemAction")
         if isinstance(replay, dict):
             nested_messages, nested_deletions = youtube_messages_from_actions(
-                replay.get("actions") or []
+                replay.get("actions") or [], language
             )
             messages.extend(nested_messages)
             deletions.extend(nested_deletions)
@@ -186,14 +189,14 @@ def youtube_messages_from_actions(actions: Iterable[Any]) -> tuple[list[ChatMess
         item = add_action.get("item")
         if not isinstance(item, dict):
             continue
-        parsed = _message_from_renderer(item)
+        parsed = _message_from_renderer(item, language)
         if parsed is not None:
             messages.append(parsed)
 
     return messages, deletions
 
 
-def _message_from_renderer(item: dict[str, Any]) -> ChatMessage | None:
+def _message_from_renderer(item: dict[str, Any], language: str = "en") -> ChatMessage | None:
     renderer_types = (
         ("liveChatTextMessageRenderer", "message"),
         ("liveChatPaidMessageRenderer", "paid"),
@@ -222,9 +225,9 @@ def _message_from_renderer(item: dict[str, Any]) -> ChatMessage | None:
     if not text:
         text = clean_text(renderer.get("subtext"))
     if not text and kind == "paid":
-        text = "Enviou um Super Chat / Super Sticker"
+        text = tr(language, "super_chat_sent")
     if not text and kind == "membership":
-        text = "Tornou-se membro do canal"
+        text = tr(language, "became_member")
     if not text:
         return None
 
@@ -250,7 +253,7 @@ def _message_from_renderer(item: dict[str, Any]) -> ChatMessage | None:
     )
 
 
-def official_message_from_item(item: dict[str, Any]) -> ChatMessage | None:
+def official_message_from_item(item: dict[str, Any], language: str = "en") -> ChatMessage | None:
     snippet = item.get("snippet") or {}
     author_details = item.get("authorDetails") or {}
     if not isinstance(snippet, dict) or not isinstance(author_details, dict):
@@ -262,13 +265,13 @@ def official_message_from_item(item: dict[str, Any]) -> ChatMessage | None:
     kind = "message"
     if event_type == "superChatEvent":
         details = snippet.get("superChatDetails") or {}
-        text = clean_text(details.get("userComment")) or text or "Enviou um Super Chat"
+        text = clean_text(details.get("userComment")) or text or tr(language, "super_chat")
         amount = clean_text(details.get("amountDisplayString"))
         kind = "paid"
     elif event_type == "superStickerEvent":
         details = snippet.get("superStickerDetails") or {}
         amount = clean_text(details.get("amountDisplayString"))
-        text = text or "Enviou um Super Sticker"
+        text = text or tr(language, "super_sticker")
         kind = "paid"
     elif event_type in {
         "newSponsorEvent",
@@ -276,18 +279,18 @@ def official_message_from_item(item: dict[str, Any]) -> ChatMessage | None:
         "membershipGiftingEvent",
         "giftMembershipReceivedEvent",
     }:
-        text = text or "Evento de membro do canal"
+        text = text or tr(language, "member_event")
         kind = "membership"
     if not text:
         return None
 
     badges: list[str] = []
     if author_details.get("isChatOwner"):
-        badges.append("DONO")
+        badges.append("OWNER")
     if author_details.get("isChatModerator"):
         badges.append("MOD")
     if author_details.get("isChatSponsor"):
-        badges.append("MEMBRO")
+        badges.append("MEMBER")
 
     timestamp = datetime.now(UTC)
     published_at = snippet.get("publishedAt")
@@ -318,12 +321,16 @@ class YouTubeProvider(BaseProvider):
         events: Queue[ProviderEvent],
         user_input: str,
         api_key: str = "",
+        language: str = "en",
     ) -> None:
         super().__init__(events)
-        self.user_input = normalize_youtube_input(user_input)
+        self.language = normalize_language(language)
+        self.user_input = normalize_youtube_input(user_input, self.language)
         self.user_api_key = api_key.strip()
         self.session = requests.Session()
         self.session.headers.update(_BROWSER_HEADERS)
+        if self.language == "pt-BR":
+            self.session.headers["Accept-Language"] = "pt-BR,pt;q=0.9,en-US;q=0.7,en;q=0.5"
         self.session.cookies.set("SOCS", "CAI", domain=".youtube.com")
         self._seen_ids: set[str] = set()
         self._seen_order: deque[str] = deque(maxlen=3_000)
@@ -336,7 +343,7 @@ class YouTubeProvider(BaseProvider):
         delay = 3.0
         while not self.stop_event.is_set():
             try:
-                self.emit_status("connecting", "Procurando a live…")
+                self.emit_status("connecting", tr(self.language, "searching_live"))
                 video_id = self._resolve_video_id()
                 if self.user_api_key:
                     self._run_official_api(video_id)
@@ -344,22 +351,25 @@ class YouTubeProvider(BaseProvider):
                     self._run_innertube(video_id)
                 delay = 3.0
             except StreamOffline:
-                self.emit_status("waiting", "Aguardando a próxima live")
+                self.emit_status("waiting", tr(self.language, "waiting_next_live"))
                 if self.wait(30):
                     break
             except RateLimited:
-                self.emit_status("error", "YouTube limitou o acesso; tentando em 60s")
+                self.emit_status("error", tr(self.language, "rate_limited"))
                 if self.wait(60):
                     break
             except Exception as exc:  # noqa: BLE001 - remote network/format boundary
                 if self.stop_event.is_set():
                     break
                 self.log.warning("YouTube reconnect: %s", exc)
-                self.emit_status("waiting", f"Reconectando em {int(delay)}s")
+                self.emit_status(
+                    "waiting",
+                    tr(self.language, "reconnecting", seconds=int(delay)),
+                )
                 if self.wait(delay):
                     break
                 delay = min(delay * 2, 60.0)
-        self.emit_status("stopped", "Desconectado")
+        self.emit_status("stopped", tr(self.language, "disconnected"))
 
     def _resolve_video_id(self) -> str:
         direct_id = youtube_video_id(self.user_input)
@@ -386,12 +396,12 @@ class YouTubeProvider(BaseProvider):
             match = _VIDEO_ID_IN_HTML.search(response.text)
             if match:
                 return match.group(1)
-        raise StreamOffline("Nenhuma transmissão ao vivo foi encontrada.")
+        raise StreamOffline("No active live stream was found.")
 
     def _run_innertube(self, video_id: str) -> None:
         bootstrap = self._bootstrap_chat(video_id)
         continuation = bootstrap.continuation
-        self.emit_status("connected", "Ao vivo · modo automático")
+        self.emit_status("connected", tr(self.language, "live_auto"))
 
         failures = 0
         while not self.stop_event.is_set():
@@ -415,7 +425,7 @@ class YouTubeProvider(BaseProvider):
             except requests.RequestException as exc:
                 failures += 1
                 if failures >= 3:
-                    raise ConnectionError("Falha ao consultar o chat do YouTube.") from exc
+                    raise ConnectionError("Failed to query YouTube live chat.") from exc
                 if self.wait(min(2**failures, 10)):
                     return
                 continue
@@ -428,18 +438,20 @@ class YouTubeProvider(BaseProvider):
                 failures = 0
                 continue
             if response.status_code >= 400:
-                raise ConnectionError(f"YouTube respondeu HTTP {response.status_code}.")
+                raise ConnectionError(f"YouTube returned HTTP {response.status_code}.")
 
             try:
                 payload = response.json()
             except ValueError as exc:
-                raise ConnectionError("Resposta inválida do YouTube.") from exc
+                raise ConnectionError("YouTube returned an invalid response.") from exc
 
             live = (payload.get("continuationContents") or {}).get("liveChatContinuation")
             if not isinstance(live, dict):
-                raise ChatUnavailable("A live terminou ou o chat foi desativado.")
+                raise ChatUnavailable("The live stream ended or chat was disabled.")
 
-            messages, deletions = youtube_messages_from_actions(live.get("actions") or [])
+            messages, deletions = youtube_messages_from_actions(
+                live.get("actions") or [], self.language
+            )
             for message in messages:
                 self._emit_once(message)
             for message_id in deletions:
@@ -447,7 +459,7 @@ class YouTubeProvider(BaseProvider):
 
             next_continuation, timeout_ms = find_continuation(live.get("continuations") or [])
             if not next_continuation:
-                raise ChatUnavailable("O chat da live foi encerrado.")
+                raise ChatUnavailable("The live chat was closed.")
             continuation = next_continuation
             failures = 0
             if self.wait(max(1.0, min(timeout_ms / 1000, 15.0))):
@@ -463,34 +475,36 @@ class YouTubeProvider(BaseProvider):
             or extract_json_object(html, 'window["ytInitialData"]')
         )
         if not initial_data:
-            raise ChatUnavailable("Não foi possível ler os dados da live.")
+            raise ChatUnavailable("Unable to read live stream data.")
 
         live_renderer = find_first_key(initial_data, "liveChatRenderer")
         if not isinstance(live_renderer, dict):
-            raise ChatUnavailable("A live não possui chat público ativo.")
+            raise ChatUnavailable("The live stream does not have an active public chat.")
         continuation, _ = find_continuation(live_renderer.get("continuations") or live_renderer)
         if not continuation:
-            raise ChatUnavailable("O YouTube não forneceu acesso ao chat.")
+            raise ChatUnavailable("YouTube did not provide live chat access.")
 
         api_key = _extract_string(html, "INNERTUBE_API_KEY")
         client_name = _extract_string(html, "INNERTUBE_CLIENT_NAME") or "WEB"
         client_version = _extract_string(html, "INNERTUBE_CLIENT_VERSION")
         client_name_numeric = _extract_number(html, "INNERTUBE_CONTEXT_CLIENT_NAME") or "1"
         if not api_key or not client_version:
-            raise ChatUnavailable("Configuração interna do YouTube não encontrada.")
+            raise ChatUnavailable("YouTube internal configuration was not found.")
 
+        locale = "pt-BR" if self.language == "pt-BR" else "en-US"
+        region = "BR" if self.language == "pt-BR" else "US"
         context = extract_json_object(html, '"INNERTUBE_CONTEXT"') or {
             "client": {
-                "hl": "pt-BR",
-                "gl": "BR",
+                "hl": locale,
+                "gl": region,
                 "clientName": client_name,
                 "clientVersion": client_version,
             }
         }
         client = context.setdefault("client", {})
         if isinstance(client, dict):
-            client.setdefault("hl", "pt-BR")
-            client.setdefault("gl", "BR")
+            client["hl"] = locale
+            client["gl"] = region
             client.setdefault("clientName", client_name)
             client.setdefault("clientVersion", client_version)
             visitor_data = _extract_string(html, "VISITOR_DATA")
@@ -519,13 +533,13 @@ class YouTubeProvider(BaseProvider):
         )
         items = details.get("items") or []
         if not items:
-            raise StreamOffline("A transmissão não foi encontrada.")
+            raise StreamOffline("The live stream was not found.")
         live_details = items[0].get("liveStreamingDetails") or {}
         live_chat_id = live_details.get("activeLiveChatId")
         if not live_chat_id:
-            raise ChatUnavailable("A transmissão não possui chat ativo.")
+            raise ChatUnavailable("The live stream does not have an active chat.")
 
-        self.emit_status("connected", "Ao vivo · API oficial")
+        self.emit_status("connected", tr(self.language, "live_official"))
         page_token = ""
         while not self.stop_event.is_set():
             params = {
@@ -542,12 +556,12 @@ class YouTubeProvider(BaseProvider):
             )
             for item in payload.get("items") or []:
                 if isinstance(item, dict):
-                    message = official_message_from_item(item)
+                    message = official_message_from_item(item, self.language)
                     if message:
                         self._emit_once(message)
             page_token = str(payload.get("nextPageToken") or "")
             if not page_token:
-                raise ChatUnavailable("O chat oficial foi encerrado.")
+                raise ChatUnavailable("The official live chat was closed.")
             try:
                 interval = int(payload.get("pollingIntervalMillis") or 5_000) / 1000
             except (TypeError, ValueError):
@@ -573,18 +587,18 @@ class YouTubeProvider(BaseProvider):
         try:
             response = self.session.get(url, timeout=(10, 25), allow_redirects=True)
         except requests.RequestException as exc:
-            raise ConnectionError("Não foi possível acessar o YouTube.") from exc
+            raise ConnectionError("Unable to access YouTube.") from exc
         if response.status_code == 429 or "/sorry/" in response.url:
             raise RateLimited()
         if response.status_code >= 400:
-            raise ConnectionError(f"YouTube respondeu HTTP {response.status_code}.")
+            raise ConnectionError(f"YouTube returned HTTP {response.status_code}.")
         return response
 
     def _get_json(self, url: str, params: dict[str, Any]) -> dict[str, Any]:
         try:
             response = self.session.get(url, params=params, timeout=(10, 25))
         except requests.RequestException as exc:
-            raise ConnectionError("Falha ao acessar a API do YouTube.") from exc
+            raise ConnectionError("Failed to access the YouTube API.") from exc
         if response.status_code == 429:
             raise RateLimited()
         if response.status_code >= 400:
@@ -592,13 +606,13 @@ class YouTubeProvider(BaseProvider):
                 reason = response.json()["error"]["message"]
             except (ValueError, KeyError, TypeError):
                 reason = f"HTTP {response.status_code}"
-            raise ChatUnavailable(f"API do YouTube: {reason}")
+            raise ChatUnavailable(f"YouTube API: {reason}")
         try:
             payload = response.json()
         except ValueError as exc:
-            raise ConnectionError("A API do YouTube retornou dados inválidos.") from exc
+            raise ConnectionError("The YouTube API returned invalid data.") from exc
         if not isinstance(payload, dict):
-            raise ConnectionError("A API do YouTube retornou dados inesperados.")
+            raise ConnectionError("The YouTube API returned unexpected data.")
         return payload
 
 

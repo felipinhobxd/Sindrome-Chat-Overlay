@@ -14,6 +14,7 @@ class SettingsStoreTests(unittest.TestCase):
             path = Path(directory) / "settings.json"
             store = SettingsStore(path)
             settings = Settings(
+                language="pt-BR",
                 twitch_channel="@SindromeGames",
                 youtube_input="@SindromeGames",
                 font_size=99,
@@ -22,6 +23,7 @@ class SettingsStoreTests(unittest.TestCase):
             store.save(settings)
             loaded = store.load()
             self.assertEqual(loaded.twitch_channel, "sindromegames")
+            self.assertEqual(loaded.language, "pt-BR")
             self.assertEqual(
                 loaded.youtube_input,
                 "https://www.youtube.com/@SindromeGames/live",
@@ -58,8 +60,13 @@ class SettingsStoreTests(unittest.TestCase):
 
     def test_notifications_are_enabled_by_default(self) -> None:
         settings = Settings()
+        self.assertEqual(settings.language, "en")
         self.assertTrue(settings.auto_scroll)
         self.assertTrue(settings.sound_enabled)
+
+    def test_unknown_language_falls_back_to_english(self) -> None:
+        settings = Settings(language="invalid").normalized()
+        self.assertEqual(settings.language, "en")
 
 
 if __name__ == "__main__":

@@ -13,7 +13,7 @@ if not errorlevel 1 (
 )
 
 if not exist ".venv\Scripts\python.exe" (
-    echo Preparando o aplicativo pela primeira vez...
+    echo Preparing the application for its first launch...
     %PY_CMD% -m venv .venv
     if errorlevel 1 goto :failed
     call ".venv\Scripts\activate.bat"
@@ -31,12 +31,12 @@ if errorlevel 1 goto :failed
 exit /b 0
 
 :python_missing
-echo Python 3 nao foi encontrado. Instale o Python 3.12 de 64 bits:
+echo Python 3 was not found. Install 64-bit Python 3.12:
 echo https://www.python.org/downloads/windows/
 pause
 exit /b 1
 
 :failed
-echo Nao foi possivel iniciar. Consulte o README.md.
+echo The application could not be started. See README.md.
 pause
 exit /b 1

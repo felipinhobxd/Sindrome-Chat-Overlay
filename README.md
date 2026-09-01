@@ -1,104 +1,105 @@
 # Sindrome Chat Overlay
 
-Overlay transparente para Windows que reúne, em uma única janela, as mensagens ao vivo da **Twitch** e do **YouTube**. O projeto já vem configurado com:
+A transparent Windows overlay that combines live **Twitch** and **YouTube** messages in one always-on-top window.
+
+The app starts in English and also includes a complete **Português (Brasil)** interface. It is read-only: it never sends chat messages, asks for platform passwords, or writes chat content to log files.
+
+## Download
+
+Open the [latest release](https://github.com/felipinhobxd/Twitch-Youtube-ChatOverlay/releases/latest) and choose one of these files:
+
+- **`SindromeChatOverlay-Setup-vX.Y.Z.exe` — recommended.** Installs the app for the current Windows user, creates Start Menu and optional desktop shortcuts, and adds a standard uninstaller.
+- **`SindromeChatOverlay.exe`** — portable standalone executable; no installation required.
+- **`SindromeChatOverlay-Windows-vX.Y.Z.zip`** — portable executable plus documentation and license files.
+- **`SHA256SUMS.txt`** — SHA-256 checksums for verifying the downloads.
+
+The downloadable executables are built automatically on a clean GitHub-hosted Windows runner from the source code in this repository.
+
+## Default channels
 
 - Twitch: `sindromegames`
 - YouTube: `https://www.youtube.com/@SindromeGames/live`
 
-O aplicativo é somente leitura: ele não envia mensagens, não pede senha das plataformas e não registra o conteúdo do chat em arquivos.
+You can replace either channel in the app settings.
 
-## O que já funciona
+## Features
 
-- Twitch e YouTube simultaneamente, ordenados conforme chegam ao computador.
-- Detecção automática da transmissão ativa quando é informado um canal do YouTube.
-- Identificação visual de Twitch, YouTube, moderadores, membros, Bits, Super Chats e eventos de inscrição.
-- Reconexão automática se a internet ou uma das plataformas oscilar.
-- Rolagem automática que mantém a mensagem mais nova visível.
-- Som curto para cada nova mensagem, vindo da Twitch ou do YouTube.
-- Remoção da mensagem no overlay quando a plataforma informa que ela foi apagada.
-- Janela sem borda, transparente, redimensionável e sempre no topo.
-- Modo de clique através para jogar sem o overlay capturar o mouse.
-- Atalho global `Ctrl + Shift + O` para bloquear ou desbloquear os cliques.
-- Ícone ao lado do relógio com mostrar/ocultar, configurações e sair.
-- Fonte, transparência, quantidade e tempo de permanência das mensagens configuráveis.
-- Configurações salvas para a próxima abertura.
-- Log técnico rotativo em `%APPDATA%\SindromeChatOverlay\overlay.log`.
+- Combines Twitch and YouTube messages in arrival order.
+- Automatically detects an active YouTube live stream from a channel URL.
+- Visually identifies Twitch, YouTube, moderators, subscribers, members, Bits, Super Chats, and membership events.
+- Automatically reconnects after temporary network or platform failures.
+- Automatically scrolls to keep the newest message visible.
+- Plays a short sound for each new Twitch or YouTube message.
+- Removes a message when the platform reports that it was deleted.
+- Transparent, borderless, resizable, and always-on-top window.
+- Click-through mode prevents the overlay from capturing mouse input while gaming.
+- Global `Ctrl + Shift + O` shortcut locks or unlocks mouse clicks.
+- System tray menu for showing, hiding, configuring, locking, or closing the app.
+- Configurable font size, opacity, message limit, and message lifetime.
+- English and Brazilian Portuguese interface languages.
+- Persistent user settings and a rotating technical log at `%APPDATA%\SindromeChatOverlay\overlay.log`.
 
-> O YouTube mostra o **chat da transmissão ao vivo**, não os comentários comuns publicados abaixo de vídeos gravados.
+> YouTube integration displays a live stream's **live chat**, not regular comments posted below recorded videos.
 
-## Testar sem gerar o EXE
+## Language
 
-1. Instale o [Python 3.12 de 64 bits](https://www.python.org/downloads/windows/) e marque **Add Python to PATH** durante a instalação.
-2. Dê dois cliques em `INICIAR.bat`.
-3. Na primeira execução, aguarde a instalação automática das dependências.
+English is used on the first launch. To switch languages:
 
-## Gerar o `.exe` automaticamente
+1. Open the gear button.
+2. Select **Português (Brasil)** under **Language**.
+3. Select **Save**.
 
-1. Instale o Python 3.12 de 64 bits, se ainda não estiver instalado.
-2. Dê dois cliques em `GERAR_EXE.bat`.
-3. O arquivo será criado em:
+The main window, settings, system tray, notifications, platform statuses, automatic event text, and known badge names are translated together. The preference is saved for future launches.
 
-   `dist\SindromeChatOverlay.exe`
+## How to use
 
-O `.bat` cria um ambiente isolado, instala tudo que é necessário, gera o ícone e executa o PyInstaller. A pasta `dist` será aberta automaticamente quando terminar.
+- Drag the top bar to move the overlay.
+- Drag the lower-right corner to resize it.
+- Select the gear button to change channels, language, and appearance.
+- Automatic scrolling and message sounds can be disabled independently.
+- Select the lock button or press `Ctrl + Shift + O` to enable click-through mode.
+- When locked, use the same shortcut or the system tray icon to unlock the overlay.
+- The `⌫` button only clears the local overlay; it does not delete platform messages.
 
-Para enviar a um amigo, envie o `.exe` junto com `LEIA-ME.md`, `LICENSE.txt` e `THIRD_PARTY_NOTICES.md` que estarão na mesma pasta. Cada pessoa pode trocar os próprios canais pelo botão de engrenagem.
+Borderless-windowed or windowed games provide the best compatibility. Windows may prevent overlays from appearing above some exclusive-fullscreen games.
 
-### Gerar e baixar pelo GitHub
+## YouTube modes
 
-O projeto inclui `.github/workflows/build-windows.yml`. A ação **Gerar EXE e Release do Windows** compila o programa em uma máquina Windows e publica automaticamente em **Releases**:
+No API key is required by default. Automatic mode reads public data used by YouTube's live chat page.
 
-- `SindromeChatOverlay.exe`, pronto para executar;
-- um `.zip` portátil com o programa e a documentação;
-- `SHA256SUMS.txt`, para conferir a integridade dos downloads.
+Each user may optionally enter their own **YouTube Data API v3** key. When a key is present, the app uses the official API endpoints. Never embed a personal key in source code or in an executable you intend to share.
 
-A compilação também fica disponível em **Actions → Gerar EXE e Release do Windows → Artifacts** e pode ser iniciada manualmente por **Run workflow**.
+Automatic mode follows a public but undocumented YouTube interface, so a future site change may require an application update. Official API mode is the more stable option when a key is available.
 
-## Como usar
+## Troubleshooting
 
-- Arraste a barra superior para mover o overlay.
-- Arraste o canto inferior direito para redimensionar.
-- Clique na engrenagem para trocar canais e aparência.
-- Nas configurações, a rolagem automática e o som podem ser desativados separadamente.
-- Clique no cadeado ou pressione `Ctrl + Shift + O` para ativar o clique através.
-- Quando estiver bloqueado, use o mesmo atalho ou o ícone ao lado do relógio para desbloquear.
-- O botão `⌫` limpa apenas a tela; ele não apaga nada nas plataformas.
+### YouTube shows “Waiting for the next live stream”
 
-Jogos em **janela sem borda** ou **modo janela** são os mais compatíveis. O Windows pode impedir que overlays apareçam sobre alguns jogos em tela cheia exclusiva.
+- Confirm that the stream is currently live and public chat is enabled.
+- For an unlisted live stream, paste the complete video URL into settings.
+- Private or members-only streams require authentication and cannot be read by public mode.
 
-## YouTube: modo automático e API oficial
+### Twitch messages do not appear
 
-Por padrão, nenhuma chave é necessária. O aplicativo lê os dados públicos que a própria página do chat utiliza.
+- Confirm the channel name and verify that its chat is publicly available.
+- Some corporate networks or antivirus products block TLS port `6697`, used by Twitch IRC.
+- Inspect `%APPDATA%\SindromeChatOverlay\overlay.log` for the reconnect reason.
 
-Opcionalmente, cada usuário pode informar sua própria chave da **YouTube Data API v3** nas configurações. Nesse caso, o programa usa os endpoints oficiais para ler o chat. Não coloque uma chave pessoal no código nem dentro de um `.exe` que será compartilhado.
+### Windows SmartScreen displays a warning
 
-Como o modo automático acompanha uma interface pública não documentada do YouTube, uma mudança futura no site pode exigir atualização do aplicativo. O modo oficial é a alternativa mais estável quando uma chave estiver disponível.
+The generated files do not have a commercial code-signing certificate. SmartScreen may warn about new, unsigned applications. Only run builds from this repository or another source you trust.
 
-## Solução de problemas
+### The overlay disappeared or does not receive clicks
 
-### O YouTube fica em “Aguardando a próxima live”
+- Look for the Sindrome Chat Overlay icon in the Windows system tray.
+- Press `Ctrl + Shift + O`.
+- To reset settings, close the app and remove `%APPDATA%\SindromeChatOverlay\settings.json`.
 
-- Confirme que a transmissão está realmente ao vivo e que o chat público está ativado.
-- Para uma live não listada, cole o link completo do vídeo nas configurações.
-- Lives privadas ou somente para membros exigem autenticação e não são lidas pelo modo público.
+## Run from source
 
-### A Twitch não mostra mensagens
+Install [64-bit Python 3.12](https://www.python.org/downloads/windows/) and enable **Add Python to PATH**, then double-click `RUN_APP.bat`.
 
-- Confirme o nome do canal e se o chat está disponível publicamente.
-- Algumas redes corporativas ou antivírus bloqueiam a porta TLS `6697` usada pelo IRC da Twitch.
-- Consulte `%APPDATA%\SindromeChatOverlay\overlay.log` para ver o motivo da reconexão.
-
-### O Windows mostra “Windows protegeu o computador”
-
-O `.exe` criado localmente não possui assinatura digital comercial. O SmartScreen pode alertar sobre programas novos. Só execute arquivos que você mesmo compilou ou recebeu de alguém em quem confia.
-
-### O overlay sumiu ou não recebe cliques
-
-- Procure o ícone ao lado do relógio.
-- Pressione `Ctrl + Shift + O`.
-- As configurações podem ser restauradas removendo `%APPDATA%\SindromeChatOverlay\settings.json` com o aplicativo fechado.
-
-## Desenvolvimento e testes
+Alternatively, use PowerShell:
 
 ```powershell
 py -3.12 -m venv .venv
@@ -108,12 +109,38 @@ python -m unittest discover -s tests -v
 python main.py
 ```
 
-Os provedores de rede rodam em threads separadas; somente a thread principal altera a interface. As requisições usam HTTPS/TLS, limites de tempo e reconexão com espera crescente. Nenhuma chave é escrita no log.
+## Build the portable executable
 
-## Referências
+Double-click `BUILD_EXE.bat`. It creates an isolated environment, installs the build dependencies, generates the icon and notification sound, and runs PyInstaller. The result is written to:
 
-O comportamento foi inspirado nos projetos [Transparent Twitch Chat Overlay](https://github.com/baffler/Transparent-Twitch-Chat-Overlay) e [Ghost Chat](https://github.com/Enubia/ghost-chat). O código deste projeto foi implementado separadamente em Python. Veja também `THIRD_PARTY_NOTICES.md`.
+```text
+dist\SindromeChatOverlay.exe
+```
 
-## Licença
+## Build the installer
 
-Código próprio sob licença MIT. As dependências mantêm suas respectivas licenças.
+The release workflow uses [Inno Setup](https://jrsoftware.org/isinfo.php) and `installer/SindromeChatOverlay.iss` to create the installer. After building the portable executable, a local installer can be compiled with:
+
+```powershell
+& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DAppVersion=1.2.0 installer\SindromeChatOverlay.iss
+```
+
+The installer uses a stable application ID, supports in-place upgrades, installs per user without requiring administrator access, creates shortcuts, and includes an uninstaller.
+
+## Automated Windows releases
+
+`.github/workflows/build-windows.yml` runs the unit tests, builds the portable executable, compiles the installer on Windows, creates checksums, uploads a GitHub Actions artifact, and publishes all downloadable files under the version found in `pyproject.toml`.
+
+The workflow runs after a push to `main` and can also be started manually from **Actions → Build Windows release → Run workflow**.
+
+## Development notes
+
+Network providers run in separate worker threads; only the main thread updates the Qt interface. Requests use HTTPS/TLS, timeouts, and exponential reconnect delays. API keys are never written to the technical log.
+
+## References
+
+The user experience was inspired by [Transparent Twitch Chat Overlay](https://github.com/baffler/Transparent-Twitch-Chat-Overlay) and [Ghost Chat](https://github.com/Enubia/ghost-chat). This project was implemented independently in Python. See `THIRD_PARTY_NOTICES.md` for dependency and reference notices.
+
+## License
+
+Original project code is available under the MIT License. Dependencies retain their respective licenses.

@@ -5,6 +5,7 @@ import time
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
+from ..i18n import tr
 from ..models import ChatMessage
 from ..settings import Settings
 
@@ -44,7 +45,7 @@ class MessageCard(QFrame):
         meta.addWidget(author)
 
         for badge_text in message.badges[:3]:
-            badge = QLabel(_short_badge(badge_text))
+            badge = QLabel(_short_badge(badge_text, settings.language))
             badge.setObjectName("MetaText")
             badge.setStyleSheet(
                 "background: rgba(255,255,255,26); border-radius: 4px; "
@@ -76,15 +77,21 @@ class MessageCard(QFrame):
         outer.addWidget(text)
 
 
-def _short_badge(value: str) -> str:
+def _short_badge(value: str, language: str = "en") -> str:
     normalized = value.upper()
     aliases = {
         "MODERATOR": "MOD",
         "CHAT MODERATOR": "MOD",
+        "MODERADOR": "MOD",
         "VERIFIED": "✓",
+        "VERIFICADO": "✓",
         "SUBSCRIBER": "SUB",
-        "MEMBER": "MEMBRO",
-        "CHANNEL OWNER": "DONO",
+        "INSCRITO": "SUB",
+        "MEMBER": tr(language, "badge_member"),
+        "MEMBRO": tr(language, "badge_member"),
+        "CHANNEL OWNER": tr(language, "badge_owner"),
+        "OWNER": tr(language, "badge_owner"),
+        "DONO": tr(language, "badge_owner"),
     }
     if normalized in aliases:
         return aliases[normalized]

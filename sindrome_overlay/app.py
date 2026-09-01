@@ -8,6 +8,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QApplication, QMessageBox
 
+from .i18n import tr
 from .logging_config import configure_logging
 from .settings import SettingsStore
 from .ui import OverlayWindow
@@ -36,8 +37,7 @@ def run() -> int:
         QMessageBox.critical(
             None,
             "Sindrome Chat Overlay",
-            "O aplicativo encontrou um erro inesperado.\n\n"
-            "Feche e abra novamente. O arquivo overlay.log pode ajudar no diagnóstico.",
+            tr(settings.language, "unexpected_error"),
         )
 
     sys.excepthook = handle_exception

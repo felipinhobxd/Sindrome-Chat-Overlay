@@ -1,16 +1,16 @@
-# Avisos de terceiros
+# Third-party notices
 
-Este projeto foi escrito em Python para esta finalidade e não incorpora o código-fonte dos projetos usados como referência visual. As ideias gerais de uma janela transparente, redimensionável, sempre no topo e com modo de clique através foram estudadas nestes projetos:
+This project was independently written in Python and does not incorporate source code from the projects used as visual and behavioral references. General ideas such as a transparent, resizable, always-on-top window and click-through mode were studied in:
 
 - [Transparent Twitch Chat Overlay](https://github.com/baffler/Transparent-Twitch-Chat-Overlay), GPL-3.0.
 - [Ghost Chat](https://github.com/Enubia/ghost-chat), DBAD Public License 1.2.
 
-Dependências instaladas durante a compilação:
+Dependencies installed during the build include:
 
-- [PySide6 / Qt for Python](https://doc.qt.io/qtforpython-6/licenses.html), disponibilizado sob LGPL-3.0/GPL-3.0 e opções comerciais, conforme os componentes utilizados.
+- [PySide6 / Qt for Python](https://doc.qt.io/qtforpython-6/licenses.html), available under LGPL-3.0/GPL-3.0 and commercial licensing options, depending on the components used.
 - [Requests](https://github.com/psf/requests), Apache-2.0.
-- [PyInstaller](https://pyinstaller.org/), GPL-2.0 com exceção de distribuição do bootloader.
-- [Pillow](https://python-pillow.github.io/), licença HPND histórica.
+- [PyInstaller](https://pyinstaller.org/), GPL-2.0 with the bootloader distribution exception.
+- [Pillow](https://python-pillow.github.io/), historical HPND license.
+- [Inno Setup](https://jrsoftware.org/isinfo.php), used only to compile the Windows installer and distributed under its own license.
 
-Ao redistribuir uma compilação, mantenha este arquivo, o `LICENSE` do aplicativo e os avisos/licenças adicionados pelas dependências. Consulte os links acima para os termos completos aplicáveis à versão instalada no momento da compilação.
-
+When redistributing a build, retain this file, the application's `LICENSE`, and any notices or licenses added by its dependencies. Consult the links above for the complete terms that apply to the versions installed at build time.
