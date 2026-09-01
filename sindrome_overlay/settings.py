@@ -48,6 +48,7 @@ class Settings:
     message_lifetime_seconds: int = 0
     auto_scroll: bool = True
     sound_enabled: bool = True
+    check_for_updates: bool = True
     show_timestamps: bool = True
     show_platform_labels: bool = True
     hide_commands: bool = False

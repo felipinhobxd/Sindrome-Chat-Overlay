@@ -79,6 +79,7 @@ class WindowsUiSmokeTests(unittest.TestCase):
                 background_opacity=0,
                 max_messages=20,
                 sound_enabled=False,
+                check_for_updates=False,
             )
             window = OverlayWindow(
                 settings,

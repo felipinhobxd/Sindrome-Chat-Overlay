@@ -47,6 +47,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "start_click_through": "Start with mouse clicks locked",
         "auto_scroll": "Automatically scroll when a message arrives",
         "sound_enabled": "Play a sound when a message arrives",
+        "check_for_updates": "Automatically check for application updates",
         "show_timestamps": "Show timestamps",
         "show_platform": "Show Twitch / YouTube on each message",
         "hide_commands": "Hide messages that start with !",
@@ -82,6 +83,19 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "hotkey_unavailable_message": (
             "Another program is using Ctrl + Shift + O. The shortcut will work only while "
             "Sindrome Chat Overlay is active until the conflict is removed."
+        ),
+        "update_available_title": "Update available",
+        "update_available_message": (
+            "Sindrome Chat Overlay {version} is available. You are using version {current}."
+        ),
+        "update_available_details": (
+            "Would you like to open the official GitHub release page to download the update?"
+        ),
+        "open_update_page": "Open download page",
+        "later": "Later",
+        "update_open_failed_title": "Could not open the update",
+        "update_open_failed_message": (
+            "Open the Sindrome Chat Overlay Releases page in your browser to update manually."
         ),
         "connecting": "Connecting…",
         "reconnecting": "Reconnecting in {seconds}s",
@@ -158,6 +172,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "start_click_through": "Iniciar com os cliques bloqueados",
         "auto_scroll": "Rolar automaticamente ao receber mensagem",
         "sound_enabled": "Tocar som ao receber mensagem",
+        "check_for_updates": "Verificar atualizações do aplicativo automaticamente",
         "show_timestamps": "Mostrar horário",
         "show_platform": "Mostrar Twitch / YouTube em cada mensagem",
         "hide_commands": "Ocultar mensagens que começam com !",
@@ -191,6 +206,21 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "hotkey_unavailable_message": (
             "Outro programa está usando Ctrl + Shift + O. Até o conflito ser removido, o "
             "atalho funcionará somente quando o Sindrome Chat Overlay estiver ativo."
+        ),
+        "update_available_title": "Atualização disponível",
+        "update_available_message": (
+            "O Sindrome Chat Overlay {version} está disponível. Você está usando a versão "
+            "{current}."
+        ),
+        "update_available_details": (
+            "Deseja abrir a página oficial da versão no GitHub para baixar a atualização?"
+        ),
+        "open_update_page": "Abrir página de download",
+        "later": "Mais tarde",
+        "update_open_failed_title": "Não foi possível abrir a atualização",
+        "update_open_failed_message": (
+            "Abra a página Releases do Sindrome Chat Overlay no navegador para atualizar "
+            "manualmente."
         ),
         "connecting": "Conectando…",
         "reconnecting": "Reconectando em {seconds}s",

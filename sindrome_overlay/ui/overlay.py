@@ -7,10 +7,11 @@ import time
 from collections import deque
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer
+from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer, QUrl
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
+    QDesktopServices,
     QIcon,
     QKeySequence,
     QMouseEvent,
@@ -24,6 +25,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QMenu,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QSizeGrip,
@@ -32,12 +34,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .. import __version__
 from ..events import ProviderEvent
 from ..i18n import tr
 from ..models import ChatMessage
 from ..providers import TwitchProvider, YouTubeProvider
 from ..providers.base import BaseProvider
 from ..settings import Settings, SettingsStore
+from ..updates import UpdateChecker, UpdateCheckResult, UpdateInfo
 from ..win32 import WindowsGlobalHotkey, WindowsOverlayController, native_message_values
 from .message_card import MessageCard
 from .settings_dialog import SettingsDialog
@@ -101,6 +105,10 @@ class OverlayWindow(QMainWindow):
         self.native_window = WindowsOverlayController(logger)
         self._fallback_shortcut: QShortcut | None = None
         self._hotkey_warning_shown = False
+        self.update_results: queue.Queue[UpdateCheckResult] = queue.Queue()
+        self.update_checker: UpdateChecker | None = None
+        self._update_check_started = False
+        self._update_prompted = False
 
         flags = Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint
         if settings.always_on_top and sys.platform != "win32":
@@ -136,7 +144,13 @@ class OverlayWindow(QMainWindow):
         self.native_state_timer.timeout.connect(self._recover_topmost)
         self.native_state_timer.start()
 
+        self.update_result_timer = QTimer(self)
+        self.update_result_timer.setInterval(250)
+        self.update_result_timer.timeout.connect(self._drain_update_results)
+
         QTimer.singleShot(0, self._restore_native_state)
+        if self.settings.check_for_updates:
+            QTimer.singleShot(2_500, self._start_update_check)
 
         self._restart_providers()
         QTimer.singleShot(150, lambda: self.set_click_through(self.settings.click_through))
@@ -193,6 +207,75 @@ class OverlayWindow(QMainWindow):
             and not self._shutting_down
         ):
             self._apply_native_window_state()
+
+    def _start_update_check(self) -> None:
+        if (
+            self._shutting_down
+            or not self.settings.check_for_updates
+            or self._update_check_started
+        ):
+            return
+        self._update_check_started = True
+        self.update_results = queue.Queue()
+        self.update_checker = UpdateChecker(self.update_results, __version__)
+        self.update_checker.start()
+        self.update_result_timer.start()
+
+    def _drain_update_results(self) -> None:
+        while True:
+            try:
+                result = self.update_results.get_nowait()
+            except queue.Empty:
+                break
+            if result.status == "update" and result.update is not None:
+                self._show_update_prompt(result.update)
+            elif result.status == "error":
+                self.log.debug("Automatic update check failed: %s", result.error)
+
+        checker = self.update_checker
+        if checker is None or not checker.is_alive():
+            self.update_result_timer.stop()
+            self.update_checker = None
+
+    def _show_update_prompt(self, update: UpdateInfo) -> None:
+        if self._shutting_down or self._update_prompted:
+            return
+        self._update_prompted = True
+        prompt = QMessageBox(self)
+        prompt.setIcon(QMessageBox.Information)
+        prompt.setWindowTitle(self._text("update_available_title"))
+        prompt.setText(
+            self._text(
+                "update_available_message",
+                version=update.version,
+                current=__version__,
+            )
+        )
+        prompt.setInformativeText(self._text("update_available_details"))
+        open_button = prompt.addButton(
+            self._text("open_update_page"),
+            QMessageBox.AcceptRole,
+        )
+        prompt.addButton(self._text("later"), QMessageBox.RejectRole)
+        prompt.setDefaultButton(open_button)
+        prompt.exec()
+        if prompt.clickedButton() is open_button and not QDesktopServices.openUrl(
+            QUrl(update.release_url)
+        ):
+            QMessageBox.warning(
+                self,
+                self._text("update_open_failed_title"),
+                self._text("update_open_failed_message"),
+            )
+
+    def _stop_update_checker(self) -> None:
+        self.update_result_timer.stop()
+        checker = self.update_checker
+        self.update_checker = None
+        if checker is not None:
+            checker.stop()
+            if checker.is_alive():
+                checker.join(timeout=0.5)
 
     def nativeEvent(self, event_type, message):
         if sys.platform == "win32":
@@ -584,6 +667,10 @@ class OverlayWindow(QMainWindow):
         updated.window_height = self.settings.window_height
         self.settings = updated
         self.store.save(self.settings)
+        if not self.settings.check_for_updates:
+            self._stop_update_checker()
+        else:
+            self._start_update_check()
         self._apply_window_flags()
         self._apply_visual_settings()
         self._retranslate_ui(reset_statuses=True)
@@ -685,6 +772,7 @@ class OverlayWindow(QMainWindow):
         self.event_timer.stop()
         self.expiry_timer.stop()
         self.native_state_timer.stop()
+        self._stop_update_checker()
         self.global_hotkey.unregister()
         if self._fallback_shortcut is not None:
             self._fallback_shortcut.setEnabled(False)

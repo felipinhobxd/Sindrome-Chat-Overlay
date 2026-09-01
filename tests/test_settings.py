@@ -32,6 +32,7 @@ class SettingsStoreTests(unittest.TestCase):
             self.assertEqual(loaded.font_size, 30)
             self.assertEqual(loaded.max_messages, 20)
             self.assertEqual(loaded.youtube_api_key, "secret-data-api-key")
+            self.assertTrue(loaded.check_for_updates)
             saved_payload = json.loads(path.read_text(encoding="utf-8"))
             if __import__("os").name == "nt":
                 self.assertTrue(saved_payload["youtube_api_key"].startswith("dpapi:"))
@@ -69,6 +70,7 @@ class SettingsStoreTests(unittest.TestCase):
         self.assertEqual(settings.language, "en")
         self.assertTrue(settings.auto_scroll)
         self.assertTrue(settings.sound_enabled)
+        self.assertTrue(settings.check_for_updates)
 
     def test_unknown_language_falls_back_to_english(self) -> None:
         settings = Settings(language="invalid").normalized()

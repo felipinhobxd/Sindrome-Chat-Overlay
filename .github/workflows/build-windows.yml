@@ -117,13 +117,9 @@ jobs:
 
             The interface starts in English and can be changed to Brazilian Portuguese under Settings → Language. Automatic scrolling and message sounds are enabled by default.
 
-            YouTube official mode now uses the low-latency `liveChatMessages.streamList` connection, resumes from `nextPageToken`, deduplicates messages, and falls back to API-directed polling only when the streaming transport is unavailable.
+            The app now checks the official GitHub Releases API in a background thread at startup. When a newer stable version is available, it asks before opening the trusted release download page.
 
-            `Ctrl + Shift + O` now uses one native Windows global hotkey registration with no duplicate listener. TOPMOST and click-through state are restored without activating or recreating the overlay window.
-
-            Background opacity now also controls the panel border, header background, and related contours. At 0%, the panel outline disappears while chat messages and resizing remain available.
-
-            The optional YouTube Data API key is clearly distinguished from a Stream Key, masked in settings, protected with Windows DPAPI, and excluded from logs.
+            Update checks require no GitHub account or token, can be disabled under Appearance, fail silently when offline, and never download or execute an installer without user action.
 
             **Recommended:** download `SindromeChatOverlay-Setup-v${{ env.VERSION }}.exe` for a standard Windows installation with shortcuts and an uninstaller.
 

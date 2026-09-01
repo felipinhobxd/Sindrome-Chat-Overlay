@@ -138,6 +138,8 @@ class SettingsDialog(QDialog):
         self.auto_scroll.setChecked(self._current.auto_scroll)
         self.sound_enabled = QCheckBox(self._text("sound_enabled"))
         self.sound_enabled.setChecked(self._current.sound_enabled)
+        self.check_for_updates = QCheckBox(self._text("check_for_updates"))
+        self.check_for_updates.setChecked(self._current.check_for_updates)
         self.show_timestamps = QCheckBox(self._text("show_timestamps"))
         self.show_timestamps.setChecked(self._current.show_timestamps)
         self.show_platform = QCheckBox(self._text("show_platform"))
@@ -167,6 +169,7 @@ class SettingsDialog(QDialog):
         form.addRow(self.click_through)
         form.addRow(self.auto_scroll)
         form.addRow(self.sound_enabled)
+        form.addRow(self.check_for_updates)
         form.addRow(self._text("panel_opacity"), background_row)
         form.addRow(self._text("message_opacity"), card_row)
         form.addRow(self._text("font_size"), self.font_size)
@@ -225,6 +228,7 @@ class SettingsDialog(QDialog):
             message_lifetime_seconds=self.lifetime.value(),
             auto_scroll=self.auto_scroll.isChecked(),
             sound_enabled=self.sound_enabled.isChecked(),
+            check_for_updates=self.check_for_updates.isChecked(),
             show_timestamps=self.show_timestamps.isChecked(),
             show_platform_labels=self.show_platform.isChecked(),
             hide_commands=self.hide_commands.isChecked(),
@@ -246,6 +250,7 @@ class SettingsDialog(QDialog):
         self.click_through.setChecked(defaults.click_through)
         self.auto_scroll.setChecked(defaults.auto_scroll)
         self.sound_enabled.setChecked(defaults.sound_enabled)
+        self.check_for_updates.setChecked(defaults.check_for_updates)
         self.background_opacity.setValue(defaults.background_opacity)
         self.card_opacity.setValue(defaults.card_opacity)
         self.font_size.setValue(defaults.font_size)
