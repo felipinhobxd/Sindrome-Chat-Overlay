@@ -12,3 +12,9 @@ SHA256SUMS.txt
 *.spec.bak
 assets/app.ico
 assets/icon.png
+android/.gradle/
+android/build/
+android/local.properties
+*.jks
+*.keystore
+android-signing-secrets.txt

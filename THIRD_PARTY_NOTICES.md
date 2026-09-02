@@ -15,5 +15,10 @@ Dependencies installed during the build include:
 - [PyInstaller](https://pyinstaller.org/), GPL-2.0 with the bootloader distribution exception.
 - [Pillow](https://python-pillow.github.io/), historical HPND license.
 - [Inno Setup](https://jrsoftware.org/isinfo.php), used only to compile the Windows installer and distributed under its own license.
+- [AndroidX](https://github.com/androidx/androidx), Apache-2.0.
+- [Material Components for Android](https://github.com/material-components/material-components-android), Apache-2.0.
+- [OkHttp](https://github.com/square/okhttp), Apache-2.0.
+- [gRPC Java](https://github.com/grpc/grpc-java), Apache-2.0.
+- [Protocol Buffers Java](https://github.com/protocolbuffers/protobuf), BSD-3-Clause.
 
 When redistributing a build, retain this file, the application's `LICENSE`, and any notices or licenses added by its dependencies. Consult the links above for the complete terms that apply to the versions installed at build time.

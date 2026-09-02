@@ -161,6 +161,8 @@ jobs:
 
             Notification audio now has six built-in sounds, independent Twitch and YouTube choices, preview buttons, a 0–200% volume control, and a configurable global anti-spam interval for fast chats.
 
+            Version 1.8 also adds a native Android app with a normal chat screen and an optional draggable, resizable floating overlay. The Android workflow attaches the signed APK to this Release after the Windows build when private Android signing Secrets are configured.
+
             The existing official `liveChatMessages.streamList`, automatic live discovery, compatibility mode, DPAPI protection, Twitch emotes, badges, and individual username colours are preserved.
 
             **Recommended:** download `SindromeChatOverlay-Setup-v${{ env.VERSION }}.exe` for a standard Windows installation with shortcuts and an uninstaller.

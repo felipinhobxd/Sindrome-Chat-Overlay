@@ -1,6 +1,6 @@
 # Sindrome Chat Overlay
 
-A transparent Windows overlay that combines live **Twitch** and **YouTube** messages in one always-on-top window.
+A transparent Twitch and YouTube chat overlay for **Windows and Android**. The Android app includes both a normal full-screen chat and a floating overlay over other apps.
 
 The app starts in English and also includes a complete **Português (Brasil)** interface. It is read-only: it never sends chat messages, asks for platform passwords, or writes chat content to log files.
 
@@ -12,6 +12,8 @@ Open the [latest release](https://github.com/felipinhobxd/Sindrome-Chat-Overlay/
 - **`SindromeChatOverlay.exe`** — portable standalone executable; no installation required.
 - **`SindromeChatOverlay-Windows-vX.Y.Z.zip`** — portable executable plus documentation and license files.
 - **`SHA256SUMS.txt`** — SHA-256 checksums for verifying the downloads.
+- **`SindromeChatOverlay-Android-vX.Y.Z.apk`** — signed Android app for phones and tablets.
+- **`SHA256SUMS-Android.txt`** — SHA-256 checksum for the Android APK.
 
 The downloadable executables are built automatically on a clean GitHub-hosted Windows runner from the source code in this repository. The release workflow tests the app and publishes SHA-256 checksums with every build.
 
@@ -46,6 +48,9 @@ You can replace either channel in the app settings.
 - Checks for a newer stable version in the background, asks before downloading it, verifies the exact release asset, size, and SHA-256 checksum, then asks again before running the installer.
 - Persistent user settings and a rotating technical log at `%APPDATA%\SindromeChatOverlay\overlay.log`.
 - Asynchronous Twitch image downloads with a bounded local cache under `%APPDATA%\SindromeChatOverlay\twitch-assets`.
+- Native Android screen plus an optional draggable, resizable floating overlay with click-through mode.
+- Android foreground-service controls for showing, hiding, unlocking, or stopping the overlay without reopening the app.
+- Android Keystore encryption for the optional YouTube Data API key.
 
 > YouTube integration displays a live stream's **live chat**, not regular comments posted below recorded videos.
 
@@ -59,7 +64,7 @@ English is used on the first launch. To switch languages:
 
 The main window, settings, system tray, notifications, platform statuses, automatic event text, and known badge names are translated together. The preference is saved for future launches.
 
-## How to use
+## How to use on Windows
 
 - Drag the top bar marked with `⋮⋮` to move the overlay.
 - Drag the lower-right corner to resize it.
@@ -73,6 +78,18 @@ The main window, settings, system tray, notifications, platform statuses, automa
 Windowed and borderless-fullscreen games provide the best compatibility. The app uses the native Windows TOPMOST Z-order, reapplies it after restore, and does not activate the overlay while click-through is enabled.
 
 Exclusive fullscreen is different: a game that owns the display surface can bypass normal desktop composition, so Windows may not be able to place any ordinary top-level window above it. This project intentionally does not inject DLLs, hook DirectX, modify game processes, or use anti-cheat-sensitive techniques. Use borderless fullscreen when an exclusive-fullscreen game hides the overlay.
+
+## How to use on Android
+
+1. Install the versioned APK from the latest GitHub Release. Android may ask you to allow installs from the browser or file manager used to open it.
+2. Open **Sindrome Chat Overlay**. Twitch and YouTube messages appear together in the normal app screen.
+3. Select **Show floating overlay**. The first time, Android opens the system **Display over other apps** permission screen; enable it and return to the app.
+4. Drag the `⋮⋮` header to move the overlay and drag `⌟` to resize it.
+5. Select `◎` to enable click-through. When touches are locked, use the persistent notification to unlock or hide the overlay.
+
+Android requires a visible foreground-service notification while chat stays connected over other apps. The app does not request accessibility access, screen capture, root access, game-process access, or account passwords. Some games or device manufacturers can still suppress overlays for security-sensitive screens.
+
+The Android settings preserve the same simplified YouTube flow as Windows: channel/live URL in the main area, current connection mode, and an optional masked Data API key under **Advanced settings**. Video ID and Live Chat ID remain automatic; OAuth and Stream Key are not requested.
 
 ## YouTube connection
 
@@ -162,7 +179,7 @@ dist\SindromeChatOverlay.exe
 The release workflow uses [Inno Setup](https://jrsoftware.org/isinfo.php) and `installer/SindromeChatOverlay.iss` to create the installer. After building the portable executable, a local installer can be compiled with:
 
 ```powershell
-& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DAppVersion=1.7.0 installer\SindromeChatOverlay.iss
+& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DAppVersion=1.8.0 installer\SindromeChatOverlay.iss
 ```
 
 The installer uses a stable application ID, supports in-place upgrades, installs per user without requiring administrator access, creates shortcuts, and includes an uninstaller.
@@ -172,6 +189,19 @@ The installer uses a stable application ID, supports in-place upgrades, installs
 `.github/workflows/build-windows.yml` runs the unit and Windows UI tests, builds the portable executable, compiles the installer, creates SHA-256 checksums, uploads a GitHub Actions artifact, and publishes all downloadable files under the version found in `pyproject.toml`. Pull requests run the Windows tests and a PyInstaller packaging check without publishing a release.
 
 The workflow runs after a push to `main` and can also be started manually from **Actions → Build Windows release → Run workflow**.
+
+## Android builds and releases
+
+`.github/workflows/build-android.yml` uses JDK 17, Gradle 8.10.2 and Android API 35. Every pull request runs Android unit tests and lint, then uploads an installable debug APK as a workflow artifact. After the Windows workflow publishes a versioned Release, the Android workflow builds, verifies, checksums, and attaches the signed release APK to the same tag.
+
+Release signing is deliberately private. Run `tools/GENERATE_ANDROID_SIGNING_KEY.ps1` once on a trusted Windows PC with a JDK installed, keep the generated `.jks` file backed up, and add the four generated values as GitHub Actions repository Secrets:
+
+- `ANDROID_KEYSTORE_BASE64`
+- `ANDROID_KEYSTORE_PASSWORD`
+- `ANDROID_KEY_ALIAS`
+- `ANDROID_KEY_PASSWORD`
+
+The private key and passwords are ignored by Git and must never be committed. Android only accepts an in-place APK update when it is signed by the same key, so losing the `.jks` backup means future versions would require uninstalling the existing app.
 
 ## Development notes
 

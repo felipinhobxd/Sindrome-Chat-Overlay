@@ -1,0 +1,108 @@
+// Minimal compatible subset of YouTube's Apache-2.0 stream_list.proto schema.
+// Source: https://developers.google.com/youtube/v3/live/streaming-live-chat
+syntax = "proto2";
+
+package youtube.api.v3;
+option java_package = "com.sindromegames.chatoverlay.youtube.proto";
+option java_multiple_files = true;
+
+service V3DataLiveChatMessageService {
+  rpc StreamList(LiveChatMessageListRequest)
+      returns (stream LiveChatMessageListResponse) {}
+}
+
+message LiveChatMessageListRequest {
+  optional string live_chat_id = 1;
+  optional string hl = 2;
+  optional uint32 profile_image_size = 3;
+  optional string page_token = 99;
+  repeated string part = 100;
+}
+
+message LiveChatMessageListResponse {
+  optional string offline_at = 2;
+  optional string next_page_token = 100602;
+  repeated LiveChatMessage items = 1007;
+}
+
+message LiveChatMessage {
+  optional string id = 101;
+  optional LiveChatMessageSnippet snippet = 2;
+  optional LiveChatMessageAuthorDetails author_details = 3;
+}
+
+message LiveChatMessageAuthorDetails {
+  optional string channel_id = 10101;
+  optional string display_name = 103;
+  optional bool is_verified = 4;
+  optional bool is_chat_owner = 5;
+  optional bool is_chat_sponsor = 6;
+  optional bool is_chat_moderator = 7;
+}
+
+message LiveChatMessageSnippet {
+  enum Type {
+    INVALID_TYPE = 0;
+    TEXT_MESSAGE_EVENT = 1;
+    TOMBSTONE = 2;
+    FAN_FUNDING_EVENT = 3;
+    CHAT_ENDED_EVENT = 4;
+    SPONSOR_ONLY_MODE_STARTED_EVENT = 5;
+    SPONSOR_ONLY_MODE_ENDED_EVENT = 6;
+    NEW_SPONSOR_EVENT = 7;
+    USER_BANNED_EVENT = 10;
+    SUPER_CHAT_EVENT = 15;
+    SUPER_STICKER_EVENT = 16;
+    MEMBER_MILESTONE_CHAT_EVENT = 17;
+    MEMBERSHIP_GIFTING_EVENT = 18;
+    GIFT_MEMBERSHIP_RECEIVED_EVENT = 19;
+    POLL_EVENT = 20;
+    GIFT_EVENT = 21;
+  }
+
+  optional Type type = 1;
+  optional string author_channel_id = 301;
+  optional string published_at = 4;
+  optional string display_message = 16;
+  optional bool has_display_content = 17;
+  optional LiveChatTextMessageDetails text_message_details = 19;
+  optional LiveChatSuperChatDetails super_chat_details = 27;
+  optional LiveChatSuperStickerDetails super_sticker_details = 28;
+  optional LiveChatNewSponsorDetails new_sponsor_details = 29;
+  optional LiveChatMemberMilestoneChatDetails member_milestone_chat_details = 30;
+  optional LiveChatMembershipGiftingDetails membership_gifting_details = 31;
+  optional LiveChatGiftMembershipReceivedDetails gift_membership_received_details = 32;
+  optional LiveChatGiftDetails gift_details = 34;
+}
+
+message LiveChatTextMessageDetails { optional string message_text = 1; }
+message LiveChatSuperChatDetails {
+  optional string amount_display_string = 3;
+  optional string user_comment = 4;
+}
+message LiveChatSuperStickerDetails {
+  optional string amount_display_string = 3;
+  optional SuperStickerMetadata super_sticker_metadata = 5;
+}
+message SuperStickerMetadata { optional string alt_text = 2; }
+message LiveChatNewSponsorDetails { optional string member_level_name = 1; }
+message LiveChatMemberMilestoneChatDetails {
+  optional string member_level_name = 1;
+  optional uint32 member_month = 2;
+  optional string user_comment = 3;
+}
+message LiveChatMembershipGiftingDetails {
+  optional int32 gift_memberships_count = 1;
+  optional string gift_memberships_level_name = 2;
+}
+message LiveChatGiftMembershipReceivedDetails {
+  optional string member_level_name = 1;
+  optional string gifter_channel_id = 2;
+  optional string associated_membership_gifting_message_id = 3;
+}
+message LiveChatGiftDetails {
+  optional string gift_name = 1;
+  optional string alt_text = 5;
+  optional int32 combo_count = 8;
+}
+
