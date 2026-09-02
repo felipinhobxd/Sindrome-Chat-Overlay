@@ -19,6 +19,7 @@ class AuthenticodeResult:
 
 _SIGNATURE_SCRIPT = r"""
 $ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 $signature = Get-AuthenticodeSignature -LiteralPath $env:SINDROME_VERIFY_FILE
 $subject = ''
 if ($null -ne $signature.SignerCertificate) {
