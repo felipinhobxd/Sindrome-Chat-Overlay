@@ -16,6 +16,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "language_hint": "The interface language changes after you save.",
         "channels": "Channels",
         "appearance": "Appearance",
+        "sound": "Sound",
         "global_shortcut_hint": (
             "Global shortcut: Ctrl + Shift + O locks or unlocks mouse clicks on the overlay."
         ),
@@ -77,6 +78,23 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "start_click_through": "Start with mouse clicks locked",
         "auto_scroll": "Automatically scroll when a message arrives",
         "sound_enabled": "Play a sound when a message arrives",
+        "sound_controls": "Notification sounds",
+        "sound_volume": "Volume:",
+        "twitch_sound": "Twitch sound:",
+        "youtube_sound": "YouTube sound:",
+        "sound_antispam": "Minimum interval:",
+        "sound_antispam_hint": (
+            "Limits rapid notifications across both platforms. Set to No limit to play "
+            "every message sound."
+        ),
+        "sound_antispam_disabled": "No limit",
+        "preview_sound": "Test",
+        "sound_preset_soft": "Soft",
+        "sound_preset_pop": "Pop",
+        "sound_preset_chime": "Chime",
+        "sound_preset_arcade": "Arcade",
+        "sound_preset_bubble": "Bubble",
+        "sound_preset_bell": "Bell",
         "check_for_updates": "Automatically check for application updates",
         "show_timestamps": "Show timestamps",
         "show_platform": "Show Twitch / YouTube on each message",
@@ -120,10 +138,38 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
             "Sindrome Chat Overlay {version} is available. You are using version {current}."
         ),
         "update_available_details": (
-            "Would you like to open the official GitHub release page to download the update?"
+            "Download the installer now? Its SHA-256 checksum will be verified before you "
+            "are asked to run it."
         ),
-        "open_update_page": "Open download page",
+        "download_update": "Download update",
+        "update_downloading_title": "Downloading update",
+        "update_downloading": "Downloading the installer…",
+        "update_verifying": "Verifying SHA-256 checksum…",
+        "update_ready_title": "Update verified",
+        "update_ready_message": "Sindrome Chat Overlay {version} is ready to install.",
+        "update_ready_details": (
+            "The SHA-256 checksum is valid. Start the installer and close the current app?"
+        ),
+        "install_update": "Install update",
+        "update_failed_title": "Update blocked",
+        "update_download_failed": (
+            "The installer could not be downloaded. Check your connection and try again later."
+        ),
+        "update_storage_failed": "Windows could not save the downloaded installer.",
+        "update_integrity_failed": (
+            "The downloaded installer did not pass the SHA-256 integrity check. It will not run."
+        ),
+        "update_changed_failed": (
+            "The installer changed after verification. It was blocked and will not run."
+        ),
+        "update_unknown_failed": "The update could not be verified and will not run.",
+        "open_update_page": "Open official release page",
         "later": "Later",
+        "update_launch_failed_title": "Could not start the installer",
+        "update_launch_failed_message": (
+            "The verified installer was saved, but Windows could not start it. Try again from "
+            "the official Releases page."
+        ),
         "update_open_failed_title": "Could not open the update",
         "update_open_failed_message": (
             "Open the Sindrome Chat Overlay Releases page in your browser to update manually."
@@ -170,6 +216,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "language_hint": "O idioma da interface muda depois que você salvar.",
         "channels": "Canais",
         "appearance": "Aparência",
+        "sound": "Som",
         "global_shortcut_hint": (
             "Atalho global: Ctrl + Shift + O bloqueia ou desbloqueia os cliques no overlay."
         ),
@@ -233,6 +280,23 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "start_click_through": "Iniciar com os cliques bloqueados",
         "auto_scroll": "Rolar automaticamente ao receber mensagem",
         "sound_enabled": "Tocar som ao receber mensagem",
+        "sound_controls": "Sons de notificação",
+        "sound_volume": "Volume:",
+        "twitch_sound": "Som da Twitch:",
+        "youtube_sound": "Som do YouTube:",
+        "sound_antispam": "Intervalo mínimo:",
+        "sound_antispam_hint": (
+            "Limita notificações rápidas somando as duas plataformas. Selecione Sem limite "
+            "para tocar o som de toda mensagem."
+        ),
+        "sound_antispam_disabled": "Sem limite",
+        "preview_sound": "Testar",
+        "sound_preset_soft": "Suave",
+        "sound_preset_pop": "Pop",
+        "sound_preset_chime": "Sino curto",
+        "sound_preset_arcade": "Arcade",
+        "sound_preset_bubble": "Bolha",
+        "sound_preset_bell": "Sino",
         "check_for_updates": "Verificar atualizações do aplicativo automaticamente",
         "show_timestamps": "Mostrar horário",
         "show_platform": "Mostrar Twitch / YouTube em cada mensagem",
@@ -275,10 +339,38 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
             "{current}."
         ),
         "update_available_details": (
-            "Deseja abrir a página oficial da versão no GitHub para baixar a atualização?"
+            "Deseja baixar o instalador agora? O SHA-256 será verificado antes de perguntar "
+            "se deseja executá-lo."
         ),
-        "open_update_page": "Abrir página de download",
+        "download_update": "Baixar atualização",
+        "update_downloading_title": "Baixando atualização",
+        "update_downloading": "Baixando o instalador…",
+        "update_verifying": "Verificando o SHA-256…",
+        "update_ready_title": "Atualização verificada",
+        "update_ready_message": "O Sindrome Chat Overlay {version} está pronto para instalar.",
+        "update_ready_details": (
+            "O SHA-256 é válido. Deseja iniciar o instalador e fechar o aplicativo atual?"
+        ),
+        "install_update": "Instalar atualização",
+        "update_failed_title": "Atualização bloqueada",
+        "update_download_failed": (
+            "Não foi possível baixar o instalador. Verifique a conexão e tente novamente depois."
+        ),
+        "update_storage_failed": "O Windows não conseguiu salvar o instalador baixado.",
+        "update_integrity_failed": (
+            "O instalador baixado não passou na verificação SHA-256. Ele não será executado."
+        ),
+        "update_changed_failed": (
+            "O instalador mudou depois da verificação. Ele foi bloqueado e não será executado."
+        ),
+        "update_unknown_failed": "Não foi possível verificar a atualização. Ela não será executada.",
+        "open_update_page": "Abrir página oficial da versão",
         "later": "Mais tarde",
+        "update_launch_failed_title": "Não foi possível iniciar o instalador",
+        "update_launch_failed_message": (
+            "O instalador verificado foi salvo, mas o Windows não conseguiu iniciá-lo. Tente "
+            "novamente pela página oficial de Releases."
+        ),
         "update_open_failed_title": "Não foi possível abrir a atualização",
         "update_open_failed_message": (
             "Abra a página Releases do Sindrome Chat Overlay no navegador para atualizar "

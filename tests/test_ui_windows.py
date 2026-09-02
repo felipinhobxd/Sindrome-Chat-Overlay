@@ -25,6 +25,18 @@ class WindowsUiSmokeTests(unittest.TestCase):
         app.processEvents()
         self.assertIn("Compatibility mode", dialog.youtube_status_title.text())
         self.assertTrue(dialog.youtube_advanced_panel.isHidden())
+        self.assertEqual(dialog.sound_volume.maximum(), 200)
+        self.assertEqual(dialog.twitch_sound.count(), 6)
+        self.assertEqual(dialog.youtube_sound.count(), 6)
+        dialog.sound_volume.setValue(200)
+        dialog.twitch_sound.setCurrentIndex(dialog.twitch_sound.findData("arcade"))
+        dialog.youtube_sound.setCurrentIndex(dialog.youtube_sound.findData("bubble"))
+        dialog.sound_min_interval.setValue(900)
+        sound_settings = dialog.settings()
+        self.assertEqual(sound_settings.sound_volume, 200)
+        self.assertEqual(sound_settings.twitch_sound, "arcade")
+        self.assertEqual(sound_settings.youtube_sound, "bubble")
+        self.assertEqual(sound_settings.sound_min_interval_ms, 900)
 
         dialog.youtube_advanced_button.click()
         app.processEvents()
@@ -65,6 +77,7 @@ class WindowsUiSmokeTests(unittest.TestCase):
             self.assertEqual(reopened.youtube_api_key.text(), secret)
             self.assertEqual(reopened.youtube_api_key.echoMode(), QLineEdit.Password)
             self.assertTrue(reopened.youtube_advanced_panel.isHidden())
+            self.assertEqual(reopened.sound_options.title(), "Sons de notificação")
             reopened.close()
 
     def test_message_card_renders_cached_emote_badge_and_coloured_author(self) -> None:

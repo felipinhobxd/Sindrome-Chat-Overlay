@@ -13,7 +13,7 @@ Open the [latest release](https://github.com/felipinhobxd/Sindrome-Chat-Overlay/
 - **`SindromeChatOverlay-Windows-vX.Y.Z.zip`** — portable executable plus documentation and license files.
 - **`SHA256SUMS.txt`** — SHA-256 checksums for verifying the downloads.
 
-The downloadable executables are built automatically on a clean GitHub-hosted Windows runner from the source code in this repository.
+The downloadable executables are built automatically on a clean GitHub-hosted Windows runner from the source code in this repository. The release workflow tests the app and publishes SHA-256 checksums with every build.
 
 ## Default channels
 
@@ -34,7 +34,7 @@ You can replace either channel in the app settings.
 - Visually identifies Twitch, YouTube, moderators, subscribers, members, Bits, Super Chats, and membership events.
 - Automatically reconnects after temporary network or platform failures.
 - Automatically scrolls to keep the newest message visible.
-- Plays a short sound for each new Twitch or YouTube message.
+- Includes six notification sounds, independent Twitch and YouTube choices, preview buttons, 0–200% volume, and a configurable anti-spam interval for fast chats.
 - Removes a message when the platform reports that it was deleted.
 - HUD-style message rows with transparent metadata and a compact dark background only behind message text and emotes.
 - Transparent, borderless, resizable, and always-on-top window with a visible drag handle in the header.
@@ -43,7 +43,7 @@ You can replace either channel in the app settings.
 - System tray menu for showing, hiding, configuring, locking, or closing the app.
 - Configurable font size, opacity, message limit, and message lifetime.
 - English and Brazilian Portuguese interface languages.
-- Checks the official GitHub Releases page in the background at startup and asks before opening a newer stable version's download page.
+- Checks for a newer stable version in the background, asks before downloading it, verifies the exact release asset, size, and SHA-256 checksum, then asks again before running the installer.
 - Persistent user settings and a rotating technical log at `%APPDATA%\SindromeChatOverlay\overlay.log`.
 - Asynchronous Twitch image downloads with a bounded local cache under `%APPDATA%\SindromeChatOverlay\twitch-assets`.
 
@@ -63,8 +63,8 @@ The main window, settings, system tray, notifications, platform statuses, automa
 
 - Drag the top bar marked with `⋮⋮` to move the overlay.
 - Drag the lower-right corner to resize it.
-- Select the gear button to change channels, language, and appearance.
-- Automatic scrolling and message sounds can be disabled independently.
+- Select the gear button to change channels, language, appearance, and sound.
+- Under **Sound**, choose a different Twitch and YouTube alert, test each one, set volume from 0% to 200%, and configure the minimum interval between sounds. The default 500 ms interval limits noisy bursts across both platforms.
 - Automatic update checks can be disabled under Appearance. No GitHub account or token is required.
 - Select the lock button or press `Ctrl + Shift + O` to enable click-through mode.
 - When locked, use the same shortcut or the system tray icon to unlock the overlay.
@@ -125,7 +125,7 @@ Images are downloaded asynchronously so the chat never waits for the Twitch CDN.
 
 ### Windows SmartScreen displays a warning
 
-The generated files do not have a commercial code-signing certificate. SmartScreen may warn about new, unsigned applications. Only run builds from this repository or another source you trust.
+The project does not currently sign its executables, so Windows may display **Unknown publisher** or a SmartScreen warning. Download only from this repository's official Releases page and compare the file with `SHA256SUMS.txt` if you want to verify it manually.
 
 ### The overlay disappeared or does not receive clicks
 
@@ -151,7 +151,7 @@ python main.py
 
 ## Build the portable executable
 
-Double-click `BUILD_EXE.bat`. It creates an isolated environment, installs the build dependencies, generates the icon and notification sound, and runs PyInstaller. The result is written to:
+Double-click `BUILD_EXE.bat`. It creates an isolated environment, installs the build dependencies, generates the icon and notification sounds, and runs PyInstaller. The result is written to:
 
 ```text
 dist\SindromeChatOverlay.exe
@@ -162,14 +162,14 @@ dist\SindromeChatOverlay.exe
 The release workflow uses [Inno Setup](https://jrsoftware.org/isinfo.php) and `installer/SindromeChatOverlay.iss` to create the installer. After building the portable executable, a local installer can be compiled with:
 
 ```powershell
-& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DAppVersion=1.6.0 installer\SindromeChatOverlay.iss
+& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DAppVersion=1.7.0 installer\SindromeChatOverlay.iss
 ```
 
 The installer uses a stable application ID, supports in-place upgrades, installs per user without requiring administrator access, creates shortcuts, and includes an uninstaller.
 
 ## Automated Windows releases
 
-`.github/workflows/build-windows.yml` runs the unit tests, builds the portable executable, compiles the installer on Windows, creates checksums, uploads a GitHub Actions artifact, and publishes all downloadable files under the version found in `pyproject.toml`.
+`.github/workflows/build-windows.yml` runs the unit and Windows UI tests, builds the portable executable, compiles the installer, creates SHA-256 checksums, uploads a GitHub Actions artifact, and publishes all downloadable files under the version found in `pyproject.toml`. Pull requests run the Windows tests and a PyInstaller packaging check without publishing a release.
 
 The workflow runs after a push to `main` and can also be started manually from **Actions → Build Windows release → Run workflow**.
 
@@ -177,7 +177,9 @@ The workflow runs after a push to `main` and can also be started manually from *
 
 Network providers and the startup update check run in separate worker threads; only the main thread updates the Qt interface. Requests use HTTPS/TLS, timeouts, bounded reconnect delays, message-ID deduplication, and bounded UI/image caches. Provider shutdown cancels the active Twitch socket or YouTube stream before reconnection. API keys are never written to the technical log.
 
-The updater performs one unauthenticated request to GitHub's public `releases/latest` endpoint at startup. It accepts only newer stable `X.Y.Z` releases and only opens a validated `https://github.com/felipinhobxd/Sindrome-Chat-Overlay/releases/tag/...` URL after the user confirms. It never downloads or runs an executable silently.
+The updater performs one unauthenticated request to GitHub's public `releases/latest` endpoint at startup. It accepts only newer stable `X.Y.Z` releases with one exact versioned installer and one `SHA256SUMS.txt` asset under this repository. After the user confirms, a worker thread downloads both with strict URL, redirect-host, size, and timeout limits and compares SHA-256 in constant time. The file is checked again for changes before launch, and a second confirmation is required. No update is downloaded or executed silently.
+
+Windows `winsound` has no per-file volume control, so the app applies digital gain to its bundled PCM WAV data and keeps only a small bounded cache under `%LOCALAPPDATA%\SindromeChatOverlay\sound-cache`. A 200% setting doubles the source amplitude with safe 16-bit clipping; it does not change the Windows system volume.
 
 ## References
 

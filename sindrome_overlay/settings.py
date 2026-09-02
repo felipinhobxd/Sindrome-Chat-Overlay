@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .i18n import normalize_language
+from .sounds import DEFAULT_TWITCH_SOUND, DEFAULT_YOUTUBE_SOUND, normalize_sound_id
 from .url_utils import normalize_twitch_channel, normalize_youtube_input
 
 APP_DIR_NAME = "SindromeChatOverlay"
@@ -48,6 +49,10 @@ class Settings:
     message_lifetime_seconds: int = 0
     auto_scroll: bool = True
     sound_enabled: bool = True
+    sound_volume: int = 100
+    twitch_sound: str = DEFAULT_TWITCH_SOUND
+    youtube_sound: str = DEFAULT_YOUTUBE_SOUND
+    sound_min_interval_ms: int = 500
     check_for_updates: bool = True
     show_timestamps: bool = True
     show_platform_labels: bool = True
@@ -73,6 +78,10 @@ class Settings:
         self.font_size = _clamp(self.font_size, 11, 30)
         self.max_messages = _clamp(self.max_messages, 20, 500)
         self.message_lifetime_seconds = _clamp(self.message_lifetime_seconds, 0, 600)
+        self.sound_volume = _clamp(self.sound_volume, 0, 200)
+        self.twitch_sound = normalize_sound_id(self.twitch_sound, DEFAULT_TWITCH_SOUND)
+        self.youtube_sound = normalize_sound_id(self.youtube_sound, DEFAULT_YOUTUBE_SOUND)
+        self.sound_min_interval_ms = _clamp(self.sound_min_interval_ms, 0, 5_000)
         self.window_width = _clamp(self.window_width, 300, 2000)
         self.window_height = _clamp(self.window_height, 240, 1400)
         return self

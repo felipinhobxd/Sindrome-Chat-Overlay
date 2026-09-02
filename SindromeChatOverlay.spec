@@ -6,9 +6,8 @@ datas = [(str(root / "assets" / "icon.svg"), "assets")]
 runtime_icon = root / "assets" / "icon.png"
 if runtime_icon.exists():
     datas.append((str(runtime_icon), "assets"))
-message_sound = root / "assets" / "message.wav"
-if message_sound.exists():
-    datas.append((str(message_sound), "assets"))
+for notification_sound in sorted((root / "assets").glob("notification-*.wav")):
+    datas.append((str(notification_sound), "assets"))
 
 a = Analysis(
     [str(root / "main.py")],

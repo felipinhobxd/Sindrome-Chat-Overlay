@@ -5,6 +5,7 @@ from dataclasses import replace
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -27,6 +28,7 @@ from PySide6.QtWidgets import (
 
 from ..i18n import LANGUAGE_LABELS, SUPPORTED_LANGUAGES, tr
 from ..settings import Settings
+from ..sounds import NotificationSoundPlayer, SOUND_PRESETS
 from ..youtube_key import YouTubeKeyValidationResult, YouTubeKeyValidator
 
 
@@ -46,6 +48,9 @@ class SettingsDialog(QDialog):
         self._validation_request_id = 0
         self._validation_results: queue.Queue[YouTubeKeyValidationResult] = queue.Queue()
         self._validator: YouTubeKeyValidator | None = None
+        self._sound_preview_player = NotificationSoundPlayer(
+            fallback_beep=QApplication.beep,
+        )
 
         self._validation_debounce = QTimer(self)
         self._validation_debounce.setSingleShot(True)
@@ -76,6 +81,7 @@ class SettingsDialog(QDialog):
         tabs = QTabWidget()
         tabs.addTab(self._channels_tab(), self._text("channels"))
         tabs.addTab(self._appearance_tab(), self._text("appearance"))
+        tabs.addTab(self._sound_tab(), self._text("sound"))
         root.addWidget(tabs)
 
         hint = QLabel(self._text("global_shortcut_hint"))
@@ -205,8 +211,6 @@ class SettingsDialog(QDialog):
         self.click_through.setChecked(self._current.click_through)
         self.auto_scroll = QCheckBox(self._text("auto_scroll"))
         self.auto_scroll.setChecked(self._current.auto_scroll)
-        self.sound_enabled = QCheckBox(self._text("sound_enabled"))
-        self.sound_enabled.setChecked(self._current.sound_enabled)
         self.check_for_updates = QCheckBox(self._text("check_for_updates"))
         self.check_for_updates.setChecked(self._current.check_for_updates)
         self.show_timestamps = QCheckBox(self._text("show_timestamps"))
@@ -237,7 +241,6 @@ class SettingsDialog(QDialog):
         form.addRow(self.always_on_top)
         form.addRow(self.click_through)
         form.addRow(self.auto_scroll)
-        form.addRow(self.sound_enabled)
         form.addRow(self.check_for_updates)
         form.addRow(self._text("panel_opacity"), background_row)
         form.addRow(self._text("message_opacity"), card_row)
@@ -249,13 +252,84 @@ class SettingsDialog(QDialog):
         form.addRow(self.hide_commands)
         return tab
 
+    def _sound_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        self.sound_enabled = QCheckBox(self._text("sound_enabled"))
+        self.sound_enabled.setChecked(self._current.sound_enabled)
+        layout.addWidget(self.sound_enabled)
+
+        self.sound_options = QGroupBox(self._text("sound_controls"))
+        form = QFormLayout(self.sound_options)
+        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+
+        self.sound_volume, volume_row = self._slider_row(
+            self._current.sound_volume,
+            maximum=200,
+        )
+
+        self.twitch_sound = self._sound_combo(self._current.twitch_sound)
+        twitch_row = self._sound_choice_row(self.twitch_sound)
+        self.youtube_sound = self._sound_combo(self._current.youtube_sound)
+        youtube_row = self._sound_choice_row(self.youtube_sound)
+
+        self.sound_min_interval = QSpinBox()
+        self.sound_min_interval.setRange(0, 5_000)
+        self.sound_min_interval.setSingleStep(100)
+        self.sound_min_interval.setSuffix(" ms")
+        self.sound_min_interval.setSpecialValueText(self._text("sound_antispam_disabled"))
+        self.sound_min_interval.setValue(self._current.sound_min_interval_ms)
+
+        antispam_hint = QLabel(self._text("sound_antispam_hint"))
+        antispam_hint.setWordWrap(True)
+        antispam_hint.setStyleSheet("color: #AAB5CB; font-size: 12px;")
+
+        form.addRow(self._text("sound_volume"), volume_row)
+        form.addRow(self._text("twitch_sound"), twitch_row)
+        form.addRow(self._text("youtube_sound"), youtube_row)
+        form.addRow(self._text("sound_antispam"), self.sound_min_interval)
+        form.addRow(antispam_hint)
+        layout.addWidget(self.sound_options)
+        layout.addStretch(1)
+
+        self.sound_enabled.toggled.connect(self.sound_options.setEnabled)
+        self.sound_options.setEnabled(self.sound_enabled.isChecked())
+        return tab
+
+    def _sound_combo(self, selected: str) -> QComboBox:
+        combo = QComboBox()
+        for preset in SOUND_PRESETS:
+            combo.addItem(self._text(preset.translation_key), preset.identifier)
+        index = combo.findData(selected)
+        combo.setCurrentIndex(max(0, index))
+        return combo
+
+    def _sound_choice_row(self, combo: QComboBox) -> QWidget:
+        row = QWidget()
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        preview = QPushButton(self._text("preview_sound"))
+        preview.setObjectName("ActionButton")
+        preview.clicked.connect(lambda _checked=False: self._preview_sound(combo))
+        layout.addWidget(combo, 1)
+        layout.addWidget(preview)
+        return row
+
+    def _preview_sound(self, combo: QComboBox) -> None:
+        self._sound_preview_player.preview(
+            str(combo.currentData() or ""),
+            self.sound_volume.value(),
+        )
+
     @staticmethod
-    def _slider_row(value: int) -> tuple[QSlider, QWidget]:
+    def _slider_row(value: int, *, maximum: int = 100) -> tuple[QSlider, QWidget]:
         row = QWidget()
         layout = QHBoxLayout(row)
         layout.setContentsMargins(0, 0, 0, 0)
         slider = QSlider(Qt.Horizontal)
-        slider.setRange(0, 100)
+        slider.setRange(0, maximum)
         slider.setValue(value)
         label = QLabel(f"{value}%")
         label.setMinimumWidth(42)
@@ -312,6 +386,10 @@ class SettingsDialog(QDialog):
             message_lifetime_seconds=self.lifetime.value(),
             auto_scroll=self.auto_scroll.isChecked(),
             sound_enabled=self.sound_enabled.isChecked(),
+            sound_volume=self.sound_volume.value(),
+            twitch_sound=str(self.twitch_sound.currentData() or ""),
+            youtube_sound=str(self.youtube_sound.currentData() or ""),
+            sound_min_interval_ms=self.sound_min_interval.value(),
             check_for_updates=self.check_for_updates.isChecked(),
             show_timestamps=self.show_timestamps.isChecked(),
             show_platform_labels=self.show_platform.isChecked(),
@@ -334,6 +412,10 @@ class SettingsDialog(QDialog):
         self.click_through.setChecked(defaults.click_through)
         self.auto_scroll.setChecked(defaults.auto_scroll)
         self.sound_enabled.setChecked(defaults.sound_enabled)
+        self.sound_volume.setValue(defaults.sound_volume)
+        self.twitch_sound.setCurrentIndex(self.twitch_sound.findData(defaults.twitch_sound))
+        self.youtube_sound.setCurrentIndex(self.youtube_sound.findData(defaults.youtube_sound))
+        self.sound_min_interval.setValue(defaults.sound_min_interval_ms)
         self.check_for_updates.setChecked(defaults.check_for_updates)
         self.background_opacity.setValue(defaults.background_opacity)
         self.card_opacity.setValue(defaults.card_opacity)
