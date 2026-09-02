@@ -92,7 +92,7 @@ public final class OverlayService extends Service {
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL)
                 .setSmallIcon(R.drawable.ic_notification)
-                .setContentTitle(R.string.notification_title)
+                .setContentTitle(getString(R.string.notification_title))
                 .setContentText(state.clickThrough() ? getString(R.string.overlay_unlock_notification)
                         : getString(R.string.notification_text))
                 .setContentIntent(openIntent)
@@ -128,4 +128,3 @@ public final class OverlayService extends Service {
         if (manager != null) manager.createNotificationChannel(channel);
     }
 }
-
