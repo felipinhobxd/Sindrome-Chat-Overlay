@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Sindrome Chat Overlay</string>
+    <string name="app_name" translatable="false">Sindrome Chat Overlay</string>
     <string name="mobile_subtitle">Twitch + YouTube live chat</string>
     <string name="start_chat">Start chat</string>
     <string name="stop_chat">Stop chat</string>
@@ -35,8 +35,8 @@
     <string name="save">Save</string>
     <string name="cancel">Cancel</string>
     <string name="language">Language</string>
-    <string name="language_english">English</string>
-    <string name="language_portuguese">Português (Brasil)</string>
+    <string name="language_english" translatable="false">English</string>
+    <string name="language_portuguese" translatable="false">Português (Brasil)</string>
     <string name="channels">Channels</string>
     <string name="enable_twitch">Show Twitch messages</string>
     <string name="twitch_channel">Twitch channel</string>
@@ -94,10 +94,10 @@
     <string name="invalid_channel">Enter at least one valid enabled channel.</string>
     <string name="invalid_api_key_save">Correct or remove the invalid API key before saving. The app works without a key.</string>
 
-    <string name="platform_twitch">TWITCH</string>
-    <string name="platform_youtube">YOUTUBE</string>
+    <string name="platform_twitch" translatable="false">TWITCH</string>
+    <string name="platform_youtube" translatable="false">YOUTUBE</string>
     <string name="badge_owner">OWNER</string>
-    <string name="badge_mod">MOD</string>
+    <string name="badge_mod" translatable="false">MOD</string>
     <string name="badge_member">MEMBER</string>
     <string name="super_chat">Sent a Super Chat</string>
     <string name="super_sticker">Sent a Super Sticker</string>
