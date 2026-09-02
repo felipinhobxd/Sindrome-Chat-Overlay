@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sindrome-chat-overlay"
-version = "1.7.0"
+version = "1.8.0"
 description = "Transparent Windows overlay that combines Twitch and YouTube live chat."
 readme = "README.md"
 requires-python = ">=3.11,<3.14"

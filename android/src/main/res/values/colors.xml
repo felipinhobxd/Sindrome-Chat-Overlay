@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="surface">#0B101B</color>
+    <color name="surface_raised">#151B28</color>
+    <color name="surface_soft">#202838</color>
+    <color name="text_primary">#F5F7FB</color>
+    <color name="text_secondary">#AEB8CC</color>
+    <color name="accent">#9146FF</color>
+    <color name="youtube">#FF4057</color>
+    <color name="success">#4EE1A0</color>
+    <color name="warning">#FFC857</color>
+</resources>
+
