@@ -13,7 +13,7 @@ Open the [latest release](https://github.com/felipinhobxd/Sindrome-Chat-Overlay/
 - **`SindromeChatOverlay-Windows-vX.Y.Z.zip`** — portable executable plus documentation and license files.
 - **`SHA256SUMS.txt`** — SHA-256 checksums for verifying the downloads.
 
-The downloadable executables are built automatically on a clean GitHub-hosted Windows runner from the source code in this repository.
+The downloadable executables are built automatically on a clean GitHub-hosted Windows runner from the source code in this repository. The release workflow signs and timestamps the portable executable and installer with Azure Artifact Signing, verifies both signatures, and refuses to publish if signing is unavailable or invalid.
 
 ## Default channels
 
@@ -43,7 +43,7 @@ You can replace either channel in the app settings.
 - System tray menu for showing, hiding, configuring, locking, or closing the app.
 - Configurable font size, opacity, message limit, and message lifetime.
 - English and Brazilian Portuguese interface languages.
-- Checks the official GitHub Releases page in the background at startup and asks before opening a newer stable version's download page.
+- Checks for a newer stable version in the background, asks before downloading it, verifies its exact release asset, size, SHA-256 checksum, trusted Windows signature, and publisher, then asks again before running the installer.
 - Persistent user settings and a rotating technical log at `%APPDATA%\SindromeChatOverlay\overlay.log`.
 - Asynchronous Twitch image downloads with a bounded local cache under `%APPDATA%\SindromeChatOverlay\twitch-assets`.
 
@@ -125,7 +125,7 @@ Images are downloaded asynchronously so the chat never waits for the Twitch CDN.
 
 ### Windows SmartScreen displays a warning
 
-The generated files do not have a commercial code-signing certificate. SmartScreen may warn about new, unsigned applications. Only run builds from this repository or another source you trust.
+Official release executables are signed through Azure Artifact Signing. A valid signature identifies the verified publisher and prevents modified files from passing the in-app updater. SmartScreen also uses download reputation, so a new certificate or newly released file can still display a warning while reputation develops. Only run builds from this repository or another source you trust.
 
 ### The overlay disappeared or does not receive clicks
 
@@ -162,22 +162,24 @@ dist\SindromeChatOverlay.exe
 The release workflow uses [Inno Setup](https://jrsoftware.org/isinfo.php) and `installer/SindromeChatOverlay.iss` to create the installer. After building the portable executable, a local installer can be compiled with:
 
 ```powershell
-& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DAppVersion=1.6.0 installer\SindromeChatOverlay.iss
+& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DAppVersion=1.7.0 installer\SindromeChatOverlay.iss
 ```
 
 The installer uses a stable application ID, supports in-place upgrades, installs per user without requiring administrator access, creates shortcuts, and includes an uninstaller.
 
 ## Automated Windows releases
 
-`.github/workflows/build-windows.yml` runs the unit tests, builds the portable executable, compiles the installer on Windows, creates checksums, uploads a GitHub Actions artifact, and publishes all downloadable files under the version found in `pyproject.toml`.
+`.github/workflows/build-windows.yml` runs the unit tests, builds the portable executable, signs it through Azure Artifact Signing, compiles and signs the installer, verifies Authenticode publisher continuity, creates checksums after signing, uploads a GitHub Actions artifact, and publishes all downloadable files under the version found in `pyproject.toml`.
 
 The workflow runs after a push to `main` and can also be started manually from **Actions → Build Windows release → Run workflow**.
+
+The signing job uses passwordless GitHub OIDC and the protected `production-signing` environment. It fails before publishing if any signing configuration is missing. See [Azure Artifact Signing setup](docs/AZURE_ARTIFACT_SIGNING.md) for the one-time Azure and GitHub configuration.
 
 ## Development notes
 
 Network providers and the startup update check run in separate worker threads; only the main thread updates the Qt interface. Requests use HTTPS/TLS, timeouts, bounded reconnect delays, message-ID deduplication, and bounded UI/image caches. Provider shutdown cancels the active Twitch socket or YouTube stream before reconnection. API keys are never written to the technical log.
 
-The updater performs one unauthenticated request to GitHub's public `releases/latest` endpoint at startup. It accepts only newer stable `X.Y.Z` releases and only opens a validated `https://github.com/felipinhobxd/Sindrome-Chat-Overlay/releases/tag/...` URL after the user confirms. It never downloads or runs an executable silently.
+The updater performs one unauthenticated request to GitHub's public `releases/latest` endpoint at startup. It accepts only newer stable `X.Y.Z` releases with one exact versioned installer and one `SHA256SUMS.txt` asset under this repository. After the user confirms, a worker thread downloads both with strict URL, redirect-host, size, and timeout limits. It compares SHA-256 in constant time, requires a valid Windows Authenticode signature, and, in a packaged build, requires the new installer to have the same signer subject as the currently running executable. The file is checked again for changes before launch, and a second confirmation is required. No update is executed silently.
 
 ## References
 

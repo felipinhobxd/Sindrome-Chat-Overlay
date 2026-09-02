@@ -120,10 +120,49 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
             "Sindrome Chat Overlay {version} is available. You are using version {current}."
         ),
         "update_available_details": (
-            "Would you like to open the official GitHub release page to download the update?"
+            "Download the signed installer now? Its SHA-256 checksum and Windows signature "
+            "will be verified before you are asked to run it."
         ),
-        "open_update_page": "Open download page",
+        "download_update": "Download update",
+        "update_downloading_title": "Downloading update",
+        "update_downloading": "Downloading the signed installer…",
+        "update_verifying": "Verifying checksum and Windows signature…",
+        "update_ready_title": "Update verified",
+        "update_ready_message": "Sindrome Chat Overlay {version} is ready to install.",
+        "update_ready_details": (
+            "The SHA-256 checksum and trusted Windows signature are valid. Start the "
+            "installer and close the current app?"
+        ),
+        "install_update": "Install update",
+        "update_failed_title": "Update blocked",
+        "update_download_failed": (
+            "The installer could not be downloaded. Check your connection and try again later."
+        ),
+        "update_storage_failed": "Windows could not save the downloaded installer.",
+        "update_integrity_failed": (
+            "The downloaded installer did not pass the SHA-256 integrity check. It will not run."
+        ),
+        "update_signature_failed": (
+            "Windows could not validate the installer's digital signature. It will not run."
+        ),
+        "update_signer_failed": (
+            "The installer was signed by a different publisher. It will not run."
+        ),
+        "update_current_signature_failed": (
+            "The current app signature could not be validated, so a safe automatic update "
+            "cannot continue."
+        ),
+        "update_changed_failed": (
+            "The installer changed after verification. It was blocked and will not run."
+        ),
+        "update_unknown_failed": "The update could not be verified and will not run.",
+        "open_update_page": "Open official release page",
         "later": "Later",
+        "update_launch_failed_title": "Could not start the installer",
+        "update_launch_failed_message": (
+            "The verified installer was saved, but Windows could not start it. Try again from "
+            "the official Releases page."
+        ),
         "update_open_failed_title": "Could not open the update",
         "update_open_failed_message": (
             "Open the Sindrome Chat Overlay Releases page in your browser to update manually."
@@ -275,10 +314,50 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
             "{current}."
         ),
         "update_available_details": (
-            "Deseja abrir a página oficial da versão no GitHub para baixar a atualização?"
+            "Deseja baixar o instalador assinado agora? O SHA-256 e a assinatura do Windows "
+            "serão verificados antes de perguntar se deseja executá-lo."
         ),
-        "open_update_page": "Abrir página de download",
+        "download_update": "Baixar atualização",
+        "update_downloading_title": "Baixando atualização",
+        "update_downloading": "Baixando o instalador assinado…",
+        "update_verifying": "Verificando SHA-256 e assinatura do Windows…",
+        "update_ready_title": "Atualização verificada",
+        "update_ready_message": "O Sindrome Chat Overlay {version} está pronto para instalar.",
+        "update_ready_details": (
+            "O SHA-256 e a assinatura confiável do Windows são válidos. Deseja iniciar o "
+            "instalador e fechar o aplicativo atual?"
+        ),
+        "install_update": "Instalar atualização",
+        "update_failed_title": "Atualização bloqueada",
+        "update_download_failed": (
+            "Não foi possível baixar o instalador. Verifique a conexão e tente novamente depois."
+        ),
+        "update_storage_failed": "O Windows não conseguiu salvar o instalador baixado.",
+        "update_integrity_failed": (
+            "O instalador baixado não passou na verificação SHA-256. Ele não será executado."
+        ),
+        "update_signature_failed": (
+            "O Windows não conseguiu validar a assinatura digital do instalador. Ele não será "
+            "executado."
+        ),
+        "update_signer_failed": (
+            "O instalador foi assinado por outro fornecedor. Ele não será executado."
+        ),
+        "update_current_signature_failed": (
+            "Não foi possível validar a assinatura do aplicativo atual; por segurança, a "
+            "atualização automática não pode continuar."
+        ),
+        "update_changed_failed": (
+            "O instalador mudou depois da verificação. Ele foi bloqueado e não será executado."
+        ),
+        "update_unknown_failed": "Não foi possível verificar a atualização. Ela não será executada.",
+        "open_update_page": "Abrir página oficial da versão",
         "later": "Mais tarde",
+        "update_launch_failed_title": "Não foi possível iniciar o instalador",
+        "update_launch_failed_message": (
+            "O instalador verificado foi salvo, mas o Windows não conseguiu iniciá-lo. Tente "
+            "novamente pela página oficial de Releases."
+        ),
         "update_open_failed_title": "Não foi possível abrir a atualização",
         "update_open_failed_message": (
             "Abra a página Releases do Sindrome Chat Overlay no navegador para atualizar "

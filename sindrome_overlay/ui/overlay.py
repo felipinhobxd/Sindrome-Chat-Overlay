@@ -7,7 +7,7 @@ import time
 from collections import deque
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer, QUrl
+from PySide6.QtCore import QEvent, QObject, QPoint, QProcess, Qt, QTimer, QUrl
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
+    QProgressDialog,
     QPushButton,
     QScrollArea,
     QSizeGrip,
@@ -41,7 +42,14 @@ from ..models import ChatMessage
 from ..providers import TwitchProvider, YouTubeProvider
 from ..providers.base import BaseProvider
 from ..settings import Settings, SettingsStore
-from ..updates import UpdateChecker, UpdateCheckResult, UpdateInfo
+from ..updates import (
+    UpdateChecker,
+    UpdateCheckResult,
+    UpdateDownloader,
+    UpdateDownloadResult,
+    UpdateInfo,
+    sha256_matches,
+)
 from ..win32 import WindowsGlobalHotkey, WindowsOverlayController, native_message_values
 from .message_card import MessageCard
 from .settings_dialog import SettingsDialog
@@ -108,8 +116,10 @@ class OverlayWindow(QMainWindow):
         self.native_window = WindowsOverlayController(logger)
         self._fallback_shortcut: QShortcut | None = None
         self._hotkey_warning_shown = False
-        self.update_results: queue.Queue[UpdateCheckResult] = queue.Queue()
+        self.update_results: queue.Queue[UpdateCheckResult | UpdateDownloadResult] = queue.Queue()
         self.update_checker: UpdateChecker | None = None
+        self.update_downloader: UpdateDownloader | None = None
+        self.update_progress: QProgressDialog | None = None
         self._update_check_started = False
         self._update_prompted = False
 
@@ -230,15 +240,22 @@ class OverlayWindow(QMainWindow):
                 result = self.update_results.get_nowait()
             except queue.Empty:
                 break
-            if result.status == "update" and result.update is not None:
-                self._show_update_prompt(result.update)
-            elif result.status == "error":
-                self.log.debug("Automatic update check failed: %s", result.error)
+            if isinstance(result, UpdateCheckResult):
+                if result.status == "update" and result.update is not None:
+                    self._show_update_prompt(result.update)
+                elif result.status == "error":
+                    self.log.debug("Automatic update check failed: %s", result.error)
+            else:
+                self._handle_update_download_result(result)
 
         checker = self.update_checker
         if checker is None or not checker.is_alive():
-            self.update_result_timer.stop()
             self.update_checker = None
+        downloader = self.update_downloader
+        if downloader is None or not downloader.is_alive():
+            self.update_downloader = None
+        if self.update_checker is None and self.update_downloader is None:
+            self.update_result_timer.stop()
 
     def _show_update_prompt(self, update: UpdateInfo) -> None:
         if self._shutting_down or self._update_prompted:
@@ -255,16 +272,151 @@ class OverlayWindow(QMainWindow):
             )
         )
         prompt.setInformativeText(self._text("update_available_details"))
-        open_button = prompt.addButton(
-            self._text("open_update_page"),
+        download_button = prompt.addButton(
+            self._text("download_update"),
             QMessageBox.AcceptRole,
         )
         prompt.addButton(self._text("later"), QMessageBox.RejectRole)
-        prompt.setDefaultButton(open_button)
+        prompt.setDefaultButton(download_button)
         prompt.exec()
-        if prompt.clickedButton() is open_button and not QDesktopServices.openUrl(
-            QUrl(update.release_url)
-        ):
+        if prompt.clickedButton() is download_button:
+            self._start_update_download(update)
+
+    def _start_update_download(self, update: UpdateInfo) -> None:
+        if self._shutting_down or self.update_downloader is not None:
+            return
+        progress = QProgressDialog(
+            self._text("update_downloading"),
+            self._text("cancel"),
+            0,
+            100,
+            self,
+        )
+        progress.setWindowTitle(self._text("update_downloading_title"))
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+        progress.canceled.connect(self._cancel_update_download)
+        self.update_progress = progress
+        self.update_downloader = UpdateDownloader(self.update_results, update)
+        self.update_downloader.start()
+        self.update_result_timer.start()
+        progress.show()
+
+    def _cancel_update_download(self) -> None:
+        downloader = self.update_downloader
+        if downloader is not None:
+            downloader.stop()
+
+    def _handle_update_download_result(self, result: UpdateDownloadResult) -> None:
+        if self._shutting_down:
+            return
+        if result.status == "progress":
+            progress = self.update_progress
+            if progress is not None:
+                progress.setValue(result.progress)
+                if result.progress >= 90:
+                    progress.setLabelText(self._text("update_verifying"))
+            return
+
+        self._close_update_progress()
+        if result.status == "ready" and result.installer_path is not None:
+            self._show_install_prompt(result)
+        elif result.status == "error":
+            self.log.warning(
+                "Automatic update was blocked (%s, %s).",
+                result.error_code,
+                result.error,
+            )
+            self._show_update_failure(result)
+
+    def _close_update_progress(self) -> None:
+        progress = self.update_progress
+        self.update_progress = None
+        if progress is None:
+            return
+        try:
+            progress.canceled.disconnect(self._cancel_update_download)
+        except (RuntimeError, TypeError):
+            pass
+        progress.close()
+        progress.deleteLater()
+
+    def _show_install_prompt(self, result: UpdateDownloadResult) -> None:
+        installer_path = result.installer_path
+        if installer_path is None or not sha256_matches(installer_path, result.sha256):
+            self._show_update_failure(
+                UpdateDownloadResult(
+                    status="error",
+                    update=result.update,
+                    error_code="installer_changed",
+                )
+            )
+            return
+
+        prompt = QMessageBox(self)
+        prompt.setIcon(QMessageBox.Information)
+        prompt.setWindowTitle(self._text("update_ready_title"))
+        prompt.setText(self._text("update_ready_message", version=result.update.version))
+        prompt.setInformativeText(self._text("update_ready_details"))
+        install_button = prompt.addButton(self._text("install_update"), QMessageBox.AcceptRole)
+        prompt.addButton(self._text("later"), QMessageBox.RejectRole)
+        prompt.setDefaultButton(install_button)
+        prompt.exec()
+        if prompt.clickedButton() is not install_button:
+            return
+        if not sha256_matches(installer_path, result.sha256):
+            self._show_update_failure(
+                UpdateDownloadResult(
+                    status="error",
+                    update=result.update,
+                    error_code="installer_changed",
+                )
+            )
+            return
+
+        launched = QProcess.startDetached(
+            str(installer_path),
+            [],
+            str(installer_path.parent),
+        )
+        started = launched[0] if isinstance(launched, tuple) else bool(launched)
+        if not started:
+            QMessageBox.warning(
+                self,
+                self._text("update_launch_failed_title"),
+                self._text("update_launch_failed_message"),
+            )
+            return
+        QTimer.singleShot(0, self.close)
+
+    def _show_update_failure(self, result: UpdateDownloadResult) -> None:
+        error_keys = {
+            "network": "update_download_failed",
+            "storage": "update_storage_failed",
+            "checksum_manifest": "update_integrity_failed",
+            "checksum_mismatch": "update_integrity_failed",
+            "download_size": "update_integrity_failed",
+            "untrusted_download": "update_integrity_failed",
+            "signature": "update_signature_failed",
+            "signer_mismatch": "update_signer_failed",
+            "current_signature": "update_current_signature_failed",
+            "installer_changed": "update_changed_failed",
+        }
+        prompt = QMessageBox(self)
+        prompt.setIcon(QMessageBox.Warning)
+        prompt.setWindowTitle(self._text("update_failed_title"))
+        prompt.setText(self._text(error_keys.get(result.error_code, "update_unknown_failed")))
+        open_button = prompt.addButton(self._text("open_update_page"), QMessageBox.ActionRole)
+        prompt.addButton(QMessageBox.Close)
+        prompt.exec()
+        if prompt.clickedButton() is open_button:
+            self._open_release_page(result.update)
+
+    def _open_release_page(self, update: UpdateInfo) -> None:
+        if not QDesktopServices.openUrl(QUrl(update.release_url)):
             QMessageBox.warning(
                 self,
                 self._text("update_open_failed_title"),
@@ -279,6 +431,13 @@ class OverlayWindow(QMainWindow):
             checker.stop()
             if checker.is_alive():
                 checker.join(timeout=0.5)
+        downloader = self.update_downloader
+        self.update_downloader = None
+        if downloader is not None:
+            downloader.stop()
+            if downloader.is_alive():
+                downloader.join(timeout=0.5)
+        self._close_update_progress()
 
     def nativeEvent(self, event_type, message):
         if sys.platform == "win32":
