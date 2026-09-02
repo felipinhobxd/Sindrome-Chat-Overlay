@@ -28,20 +28,50 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "show_youtube_chat": "Show YouTube live chat",
         "youtube_placeholder": "@Channel, channel URL, or live stream URL",
         "optional": "Optional",
-        "show_key": "Show key",
+        "show_api_key": "Show API key",
+        "hide_api_key": "Hide API key",
         "channel": "Channel:",
         "channel_or_live": "Channel or live stream:",
-        "youtube_data_api_key": "YouTube Data API key (optional):",
-        "youtube_source_note": (
-            "The channel/live URL is used to discover the active Video ID automatically. "
-            "With an API key, the official API then discovers the Live Chat ID; you do not "
-            "need to enter either ID."
+        "advanced_settings": "Advanced settings",
+        "youtube_data_api_key_optional": "YouTube Data API Key (optional)",
+        "youtube_key_description": (
+            "Optional. Allows the official YouTube API to receive chat with lower latency "
+            "and greater stability."
         ),
-        "youtube_key_note": (
-            "Optional: enables the official low-latency streamList connection. This is a "
-            "YouTube Data API v3 key, not a Stream Key. Stream Keys are never used to read "
-            "chat. On Windows, the value is protected for your account with DPAPI and is "
-            "never written to logs."
+        "youtube_key_clarification": (
+            "This is not the Stream Key used to broadcast. The app continues to work "
+            "without it."
+        ),
+        "youtube_mode_compatibility_title": "🔵 Compatibility mode — no API key",
+        "youtube_mode_compatibility_detail": "Works without additional setup.",
+        "youtube_mode_official_title": "⚡ Official API — low latency",
+        "youtube_mode_official_detail": (
+            "Using YouTube's official API to receive chat with lower latency."
+        ),
+        "youtube_mode_official_fallback_title": "⚡ Official API — fallback connection",
+        "youtube_mode_official_fallback_detail": (
+            "The official API is active, but the low-latency connection is temporarily "
+            "unavailable."
+        ),
+        "youtube_key_valid_title": "⚡ Valid API key",
+        "youtube_key_valid_detail": (
+            "Save to use the official low-latency connection."
+        ),
+        "youtube_key_invalid_title": "⚠ API key invalid",
+        "youtube_key_invalid_detail": (
+            "This key could not be validated. Check the value you entered."
+        ),
+        "youtube_key_unavailable_title": "⚠ API key not verified",
+        "youtube_key_unavailable_detail": "The API key could not be verified right now.",
+        "youtube_key_checking_title": "Checking API key…",
+        "youtube_key_checking_detail": "This does not interrupt the current chat connection.",
+        "youtube_mode_fallback_title": "🔵 Compatibility mode",
+        "youtube_mode_fallback_detail": (
+            "The official API is unavailable, so compatibility mode is active."
+        ),
+        "youtube_invalid_key_title": "Invalid YouTube API key",
+        "youtube_invalid_key_save_message": (
+            "Correct or remove the API key before saving. The app works without a key."
         ),
         "always_on_top": "Always on top",
         "start_click_through": "Start with mouse clicks locked",
@@ -67,6 +97,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "lock_clicks": "Lock mouse clicks (Ctrl+Shift+O)",
         "unlock_clicks": "Unlock mouse clicks (Ctrl+Shift+O)",
         "close": "Close",
+        "drag_overlay_hint": "Drag here to move the overlay",
         "empty_state": (
             "Waiting for messages…\n\n"
             "Twitch and YouTube will appear together here.\n"
@@ -153,20 +184,50 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "show_youtube_chat": "Mostrar o chat ao vivo do YouTube",
         "youtube_placeholder": "@Canal, link do canal ou link da live",
         "optional": "Opcional",
-        "show_key": "Mostrar chave",
+        "show_api_key": "Mostrar API Key",
+        "hide_api_key": "Esconder API Key",
         "channel": "Canal:",
         "channel_or_live": "Canal ou live:",
-        "youtube_data_api_key": "Chave da YouTube Data API (opcional):",
-        "youtube_source_note": (
-            "O link do canal/live descobre automaticamente o Video ID da live ativa. Com uma "
-            "chave da API, a API oficial descobre o Live Chat ID; você não precisa informar "
-            "nenhum dos IDs."
+        "advanced_settings": "Configurações avançadas",
+        "youtube_data_api_key_optional": "YouTube Data API Key (opcional)",
+        "youtube_key_description": (
+            "Opcional. Permite usar a API oficial do YouTube para obter o chat com menor "
+            "latência e maior estabilidade."
         ),
-        "youtube_key_note": (
-            "Opcional: ativa a conexão oficial streamList de baixa latência. Esta é uma chave "
-            "da YouTube Data API v3, não uma Chave de Transmissão (Stream Key). Stream Key "
-            "nunca é usada para ler o chat. No Windows, o valor é protegido para sua conta "
-            "com DPAPI e nunca é gravado nos logs."
+        "youtube_key_clarification": (
+            "Não é a Stream Key usada para transmitir. O aplicativo continua funcionando "
+            "sem ela."
+        ),
+        "youtube_mode_compatibility_title": "🔵 Modo compatibilidade — sem API Key",
+        "youtube_mode_compatibility_detail": "Funciona sem configuração adicional.",
+        "youtube_mode_official_title": "⚡ API oficial — baixa latência",
+        "youtube_mode_official_detail": (
+            "Usando a API oficial do YouTube para receber o chat com menor latência."
+        ),
+        "youtube_mode_official_fallback_title": "⚡ API oficial — conexão alternativa",
+        "youtube_mode_official_fallback_detail": (
+            "A API oficial está ativa, mas a conexão de baixa latência está temporariamente "
+            "indisponível."
+        ),
+        "youtube_key_valid_title": "⚡ API Key válida",
+        "youtube_key_valid_detail": (
+            "Salve para usar a conexão oficial de baixa latência."
+        ),
+        "youtube_key_invalid_title": "⚠ API Key inválida",
+        "youtube_key_invalid_detail": (
+            "Não foi possível validar esta chave. Verifique o valor informado."
+        ),
+        "youtube_key_unavailable_title": "⚠ API Key não verificada",
+        "youtube_key_unavailable_detail": "Não foi possível verificar a API Key agora.",
+        "youtube_key_checking_title": "Verificando a API Key…",
+        "youtube_key_checking_detail": "Isso não interrompe a conexão atual do chat.",
+        "youtube_mode_fallback_title": "🔵 Modo compatibilidade",
+        "youtube_mode_fallback_detail": (
+            "A API oficial está indisponível; o modo compatibilidade está ativo."
+        ),
+        "youtube_invalid_key_title": "API Key do YouTube inválida",
+        "youtube_invalid_key_save_message": (
+            "Corrija ou remova a API Key antes de salvar. O aplicativo funciona sem chave."
         ),
         "always_on_top": "Manter sempre no topo",
         "start_click_through": "Iniciar com os cliques bloqueados",
@@ -192,6 +253,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "lock_clicks": "Bloquear cliques (Ctrl+Shift+O)",
         "unlock_clicks": "Desbloquear cliques (Ctrl+Shift+O)",
         "close": "Fechar",
+        "drag_overlay_hint": "Arraste aqui para mover o overlay",
         "empty_state": (
             "Aguardando mensagens…\n\n"
             "Twitch e YouTube aparecerão juntos aqui.\n"

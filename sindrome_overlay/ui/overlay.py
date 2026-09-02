@@ -99,6 +99,9 @@ class OverlayWindow(QMainWindow):
         self.seen_ids: set[str] = set()
         self.seen_order: deque[str] = deque(maxlen=5_000)
         self.status_labels: dict[str, QLabel] = {}
+        self.youtube_connection_mode = (
+            "official_configured" if settings.youtube_api_key else "compatibility"
+        )
         self._shutting_down = False
         self._first_lock_notice = True
         self.global_hotkey = WindowsGlobalHotkey(self.toggle_click_through, logger)
@@ -306,15 +309,25 @@ class OverlayWindow(QMainWindow):
 
         self.header = DragHeader()
         self.header.setObjectName("Header")
+        self.header.setCursor(Qt.SizeAllCursor)
         header_layout = QHBoxLayout(self.header)
         header_layout.setContentsMargins(10, 7, 7, 7)
         header_layout.setSpacing(6)
 
         title_area = QVBoxLayout()
         title_area.setSpacing(1)
+        title_row = QHBoxLayout()
+        title_row.setSpacing(6)
         self.title_label = QLabel("Sindrome Chat Overlay")
         self.title_label.setObjectName("AppTitle")
-        title_area.addWidget(self.title_label)
+        title_row.addWidget(self.title_label)
+        self.drag_indicator = QLabel("⋮⋮")
+        self.drag_indicator.setObjectName("DragHandle")
+        self.drag_indicator.setAlignment(Qt.AlignCenter)
+        self.drag_indicator.setCursor(Qt.SizeAllCursor)
+        title_row.addWidget(self.drag_indicator)
+        title_row.addStretch(1)
+        title_area.addLayout(title_row)
 
         statuses = QHBoxLayout()
         statuses.setSpacing(9)
@@ -341,6 +354,7 @@ class OverlayWindow(QMainWindow):
 
         self.close_button = QPushButton("×")
         self.close_button.setObjectName("CloseButton")
+        self.close_button.setCursor(Qt.ArrowCursor)
         self.close_button.clicked.connect(self.close)
         header_layout.addWidget(self.close_button)
         layout.addWidget(self.header)
@@ -351,8 +365,8 @@ class OverlayWindow(QMainWindow):
         self.scroll.viewport().installEventFilter(self)
         self.message_host = QWidget()
         self.message_layout = QVBoxLayout(self.message_host)
-        self.message_layout.setContentsMargins(8, 8, 8, 8)
-        self.message_layout.setSpacing(7)
+        self.message_layout.setContentsMargins(5, 4, 5, 5)
+        self.message_layout.setSpacing(3)
 
         self.empty_state = QLabel()
         self.empty_state.setObjectName("EmptyState")
@@ -376,6 +390,7 @@ class OverlayWindow(QMainWindow):
         button = QPushButton(text)
         button.setObjectName("HeaderButton")
         button.setToolTip(tooltip)
+        button.setCursor(Qt.ArrowCursor)
         return button
 
     def _build_tray(self, icon: QIcon) -> None:
@@ -419,6 +434,8 @@ class OverlayWindow(QMainWindow):
         self.clear_button.setToolTip(self._text("clear_messages"))
         self.settings_button.setToolTip(self._text("open_settings"))
         self.close_button.setToolTip(self._text("close"))
+        self.header.setToolTip(self._text("drag_overlay_hint"))
+        self.drag_indicator.setToolTip(self._text("drag_overlay_hint"))
         self.empty_state.setText(self._text("empty_state"))
         lock_key = "unlock_clicks" if self.settings.click_through else "lock_clicks"
         self.lock_button.setToolTip(self._text(lock_key))
@@ -478,6 +495,11 @@ class OverlayWindow(QMainWindow):
             self._set_status("twitch", "disabled", self._text("disabled"))
 
         if self.settings.youtube_enabled:
+            self.youtube_connection_mode = (
+                "official_configured"
+                if self.settings.youtube_api_key
+                else "compatibility"
+            )
             provider = YouTubeProvider(
                 self.events,
                 self.settings.youtube_input,
@@ -487,6 +509,7 @@ class OverlayWindow(QMainWindow):
             self.providers.append(provider)
             provider.start()
         else:
+            self.youtube_connection_mode = "disabled"
             self._set_status("youtube", "disabled", self._text("disabled"))
 
     def _stop_providers(self) -> None:
@@ -509,6 +532,8 @@ class OverlayWindow(QMainWindow):
             if event.kind == "message" and event.message is not None:
                 self.add_message(event.message)
             elif event.kind == "status":
+                if event.platform == "youtube" and event.mode:
+                    self.youtube_connection_mode = event.mode
                 self._set_status(event.platform, event.state, event.text)
             elif event.kind == "delete" and event.message_id:
                 self._remove_message_id(event.message_id)
@@ -655,7 +680,11 @@ class OverlayWindow(QMainWindow):
     def open_settings(self) -> None:
         if self.settings.click_through:
             self.set_click_through(False)
-        dialog = SettingsDialog(self.settings, self)
+        dialog = SettingsDialog(
+            self.settings,
+            self,
+            youtube_connection_mode=self.youtube_connection_mode,
+        )
         dialog.setStyleSheet(build_stylesheet(self.settings))
         if dialog.exec() != SettingsDialog.Accepted:
             return

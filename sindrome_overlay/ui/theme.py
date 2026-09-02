@@ -41,6 +41,17 @@ def build_stylesheet(settings: Settings) -> str:
             font-size: 14px;
             font-weight: 700;
         }}
+        QLabel#DragHandle {{
+            color: #C8D1E2;
+            background: rgba(3, 6, 11, 185);
+            border: 1px solid rgba(255, 255, 255, 38);
+            border-radius: 5px;
+            min-width: 24px;
+            max-width: 24px;
+            padding: 0 3px 1px 3px;
+            font-size: 14px;
+            font-weight: 700;
+        }}
         QLabel#StatusLabel {{
             color: #AAB5CB;
             font-size: 11px;
@@ -84,9 +95,13 @@ def build_stylesheet(settings: Settings) -> str:
             height: 0;
         }}
         QFrame#ChatCard {{
-            background-color: rgba(11, 16, 27, {card_alpha});
-            border: 1px solid rgba(255, 255, 255, 24);
-            border-radius: 11px;
+            background: transparent;
+            border: none;
+        }}
+        QFrame#MessageBubble {{
+            background-color: rgba(3, 5, 9, {card_alpha});
+            border: none;
+            border-radius: 6px;
         }}
         QLabel#MessageText {{
             color: #F5F7FB;
@@ -118,6 +133,60 @@ def build_stylesheet(settings: Settings) -> str:
             subcontrol-origin: margin;
             left: 10px;
             padding: 0 5px;
+        }}
+        QFrame#YouTubeStatusCard {{
+            background: #151D2B;
+            border: 1px solid #34425A;
+            border-radius: 8px;
+        }}
+        QFrame#YouTubeStatusCard[statusKind="official"] {{
+            background: #13271F;
+            border-color: #2F7658;
+        }}
+        QFrame#YouTubeStatusCard[statusKind="warning"] {{
+            background: #2A2117;
+            border-color: #8A6636;
+        }}
+        QLabel#YouTubeStatusTitle, QLabel#AdvancedFieldTitle {{
+            color: #F7F9FD;
+            background: transparent;
+            font-weight: 650;
+        }}
+        QLabel#YouTubeStatusDetail, QLabel#AdvancedHelpText {{
+            color: #AAB5CB;
+            background: transparent;
+            font-size: 12px;
+        }}
+        QPushButton#AdvancedSettingsButton {{
+            color: #C9D2E3;
+            background: transparent;
+            border: none;
+            padding: 7px 3px;
+            text-align: left;
+            font-weight: 600;
+        }}
+        QPushButton#AdvancedSettingsButton:hover {{
+            color: #FFFFFF;
+            background: #171E2D;
+            border-radius: 6px;
+        }}
+        QFrame#YouTubeAdvancedPanel {{
+            background: #121925;
+            border: 1px solid #303A50;
+            border-radius: 8px;
+        }}
+        QToolButton#RevealKeyButton {{
+            background: #20293B;
+            border: 1px solid #3A4760;
+            border-radius: 7px;
+            min-width: 35px;
+            min-height: 33px;
+            padding: 0;
+        }}
+        QToolButton#RevealKeyButton:hover,
+        QToolButton#RevealKeyButton:checked {{
+            background: #6542DD;
+            border-color: #7A57EB;
         }}
         QLineEdit, QSpinBox {{
             background: #171E2D;

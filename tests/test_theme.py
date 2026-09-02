@@ -35,10 +35,25 @@ class OverlayOpacityTests(unittest.TestCase):
                     style,
                 )
 
-    def test_zero_background_does_not_hide_message_cards(self) -> None:
+    def test_cards_are_transparent_and_zero_panel_keeps_message_bubble(self) -> None:
         style = build_stylesheet(Settings(background_opacity=0, card_opacity=80))
-        self.assertIn("background-color: rgba(11, 16, 27, 204);", style)
+        self.assertIn("QFrame#ChatCard", style)
+        self.assertIn("background: transparent;", style)
+        self.assertIn("background-color: rgba(3, 5, 9, 204);", style)
+        self.assertIn("QLabel#DragHandle", style)
+        self.assertIn("background: rgba(3, 6, 11, 185);", style)
         self.assertNotIn("window-opacity", style.casefold())
+
+    def test_hud_cards_stay_transparent_at_common_panel_opacities(self) -> None:
+        for opacity in (100, 50, 0):
+            with self.subTest(opacity=opacity):
+                style = build_stylesheet(
+                    Settings(background_opacity=opacity, card_opacity=78)
+                )
+                card_rule = style.split("QFrame#ChatCard", 1)[1].split("}", 1)[0]
+                self.assertIn("background: transparent;", card_rule)
+                self.assertIn("border: none;", card_rule)
+                self.assertIn("background-color: rgba(3, 5, 9, 199);", style)
 
 
 if __name__ == "__main__":

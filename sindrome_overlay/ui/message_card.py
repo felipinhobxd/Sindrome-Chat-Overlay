@@ -4,8 +4,15 @@ import base64
 import time
 
 from PySide6.QtCore import Qt, QUrl
-from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtGui import QPixmap, QResizeEvent
+from PySide6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
 
 from ..emotes import build_message_html
 from ..i18n import tr
@@ -31,6 +38,7 @@ class EmoteMessageLabel(QLabel):
         self.setWordWrap(True)
         self.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
         if self.asset_cache is not None and self.emote_ids:
             self.asset_cache.emote_ready.connect(self._emote_ready)
         self._render()
@@ -121,11 +129,11 @@ class MessageCard(QFrame):
             accent = "#F6B73C"
         elif message.kind in {"membership", "event"}:
             accent = "#48D597"
-        self.setStyleSheet(f"QFrame#ChatCard {{ border-left: 4px solid {accent}; }}")
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(10, 8, 10, 9)
-        outer.setSpacing(4)
+        outer.setContentsMargins(3, 2, 3, 3)
+        outer.setSpacing(2)
+        self._outer_layout = outer
 
         meta = QHBoxLayout()
         meta.setSpacing(6)
@@ -145,9 +153,9 @@ class MessageCard(QFrame):
                 meta.addWidget(TwitchBadgeLabel(badge_ref, fallback, settings, asset_cache, self))
 
         author = QLabel(message.author)
+        author.setObjectName("AuthorName")
         author.setStyleSheet(
-            f"color: {message.safe_author_colour}; font-weight: 700; "
-            "background: rgba(4, 7, 12, 170); border-radius: 3px; padding: 0 2px;"
+            f"color: {message.safe_author_colour}; font-weight: 700; background: transparent;"
         )
         author.setTextInteractionFlags(Qt.TextSelectableByMouse)
         meta.addWidget(author)
@@ -178,8 +186,27 @@ class MessageCard(QFrame):
             meta.addWidget(timestamp)
         outer.addLayout(meta)
 
-        text = EmoteMessageLabel(message, settings, asset_cache, self)
-        outer.addWidget(text)
+        self.message_bubble = QFrame(self)
+        self.message_bubble.setObjectName("MessageBubble")
+        self.message_bubble.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
+        self.message_bubble.setMaximumWidth(max(80, settings.window_width - 30))
+        bubble_layout = QHBoxLayout(self.message_bubble)
+        bubble_layout.setContentsMargins(7, 3, 7, 4)
+        bubble_layout.setSpacing(0)
+        self.message_label = EmoteMessageLabel(
+            message,
+            settings,
+            asset_cache,
+            self.message_bubble,
+        )
+        bubble_layout.addWidget(self.message_label)
+        outer.addWidget(self.message_bubble, 0, Qt.AlignLeft)
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        margins = self._outer_layout.contentsMargins()
+        available = event.size().width() - margins.left() - margins.right()
+        self.message_bubble.setMaximumWidth(max(80, available))
 
 
 def _pixmap_from_source(source: str) -> QPixmap:

@@ -7,6 +7,7 @@ from unittest.mock import patch
 import grpc
 
 from sindrome_overlay.providers.youtube import (
+    ApiKeyRejected,
     ChatDisabled,
     LiveChatEnded,
     StreamingTransportUnavailable,
@@ -120,6 +121,28 @@ class YouTubeStreamingProviderTests(unittest.TestCase):
             provider._run_official_api("abcdefghijk")
         streaming.assert_called_once_with("abcdefghijk", "live-chat-id")
         polling.assert_called_once_with("live-chat-id")
+        modes = []
+        while not provider.events.empty():
+            event = provider.events.get_nowait()
+            if event.kind == "status":
+                modes.append(event.mode)
+        self.assertEqual(modes, ["official_stream", "official_polling"])
+
+    def test_rejected_key_emits_structured_invalid_mode(self) -> None:
+        provider = YouTubeProvider(queue.Queue(), "https://youtu.be/abcdefghijk", "bad-key")
+        with (
+            patch.object(provider, "_resolve_video_id", return_value="abcdefghijk"),
+            patch.object(provider, "_run_official_api", side_effect=ApiKeyRejected()),
+            patch.object(provider, "wait", return_value=True),
+        ):
+            provider.run()
+        statuses = []
+        while not provider.events.empty():
+            event = provider.events.get_nowait()
+            if event.kind == "status":
+                statuses.append((event.state, event.mode))
+        self.assertIn(("connecting", "official_configured"), statuses)
+        self.assertIn(("error", "invalid_key"), statuses)
 
     def test_stream_connection_attempts_are_bounded_before_fallback(self) -> None:
         channels = []

@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import queue
 from dataclasses import replace
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -18,20 +20,43 @@ from PySide6.QtWidgets import (
     QSlider,
     QSpinBox,
     QTabWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from ..i18n import LANGUAGE_LABELS, SUPPORTED_LANGUAGES, tr
 from ..settings import Settings
+from ..youtube_key import YouTubeKeyValidationResult, YouTubeKeyValidator
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, current: Settings, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        current: Settings,
+        parent: QWidget | None = None,
+        *,
+        youtube_connection_mode: str = "",
+    ) -> None:
         super().__init__(parent)
         self._current = replace(current)
+        self._initial_youtube_api_key = self._current.youtube_api_key.strip()
+        self._youtube_connection_mode = youtube_connection_mode
+        self._key_validation_state = ""
+        self._validation_request_id = 0
+        self._validation_results: queue.Queue[YouTubeKeyValidationResult] = queue.Queue()
+        self._validator: YouTubeKeyValidator | None = None
+
+        self._validation_debounce = QTimer(self)
+        self._validation_debounce.setSingleShot(True)
+        self._validation_debounce.setInterval(700)
+        self._validation_debounce.timeout.connect(self._start_youtube_key_validation)
+        self._validation_result_timer = QTimer(self)
+        self._validation_result_timer.setInterval(80)
+        self._validation_result_timer.timeout.connect(self._drain_validation_results)
+
         self.setWindowTitle(self._text("settings_title"))
-        self.resize(640, 610)
+        self.resize(660, 630)
 
         root = QVBoxLayout(self)
 
@@ -64,13 +89,15 @@ class SettingsDialog(QDialog):
         defaults.clicked.connect(self._restore_defaults)
         actions.addWidget(defaults)
         actions.addStretch(1)
-        buttons = QDialogButtonBox(QDialogButtonBox.Cancel | QDialogButtonBox.Save)
-        buttons.button(QDialogButtonBox.Save).setText(self._text("save"))
-        buttons.button(QDialogButtonBox.Cancel).setText(self._text("cancel"))
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        actions.addWidget(buttons)
+        self.buttons = QDialogButtonBox(QDialogButtonBox.Cancel | QDialogButtonBox.Save)
+        self.buttons.button(QDialogButtonBox.Save).setText(self._text("save"))
+        self.buttons.button(QDialogButtonBox.Cancel).setText(self._text("cancel"))
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+        actions.addWidget(self.buttons)
         root.addLayout(actions)
+
+        QTimer.singleShot(0, self._sync_initial_youtube_status)
 
     def _text(self, key: str) -> str:
         return tr(self._current.language, key)
@@ -95,32 +122,74 @@ class SettingsDialog(QDialog):
 
         youtube_box = QGroupBox("YouTube")
         youtube_form = QFormLayout(youtube_box)
+        youtube_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         self.youtube_enabled = QCheckBox(self._text("show_youtube_chat"))
         self.youtube_enabled.setChecked(self._current.youtube_enabled)
         self.youtube_input = QLineEdit(self._current.youtube_input)
         self.youtube_input.setPlaceholderText(self._text("youtube_placeholder"))
-        self.youtube_input.setToolTip(self._text("youtube_source_note"))
+
+        self.youtube_status_card = QFrame()
+        self.youtube_status_card.setObjectName("YouTubeStatusCard")
+        status_layout = QVBoxLayout(self.youtube_status_card)
+        status_layout.setContentsMargins(12, 10, 12, 10)
+        status_layout.setSpacing(3)
+        self.youtube_status_title = QLabel()
+        self.youtube_status_title.setObjectName("YouTubeStatusTitle")
+        self.youtube_status_detail = QLabel()
+        self.youtube_status_detail.setObjectName("YouTubeStatusDetail")
+        self.youtube_status_detail.setWordWrap(True)
+        status_layout.addWidget(self.youtube_status_title)
+        status_layout.addWidget(self.youtube_status_detail)
+
+        self.youtube_advanced_button = QPushButton()
+        self.youtube_advanced_button.setObjectName("AdvancedSettingsButton")
+        self.youtube_advanced_button.setCheckable(True)
+        self.youtube_advanced_button.setChecked(False)
+        self.youtube_advanced_button.toggled.connect(self._toggle_youtube_advanced)
+
+        self.youtube_advanced_panel = QFrame()
+        self.youtube_advanced_panel.setObjectName("YouTubeAdvancedPanel")
+        advanced_layout = QVBoxLayout(self.youtube_advanced_panel)
+        advanced_layout.setContentsMargins(12, 11, 12, 11)
+        advanced_layout.setSpacing(7)
+        api_key_label = QLabel(self._text("youtube_data_api_key_optional"))
+        api_key_label.setObjectName("AdvancedFieldTitle")
+
+        key_row = QWidget()
+        key_row_layout = QHBoxLayout(key_row)
+        key_row_layout.setContentsMargins(0, 0, 0, 0)
+        key_row_layout.setSpacing(6)
         self.youtube_api_key = QLineEdit(self._current.youtube_api_key)
         self.youtube_api_key.setEchoMode(QLineEdit.Password)
         self.youtube_api_key.setPlaceholderText(self._text("optional"))
-        show_key = QCheckBox(self._text("show_key"))
-        show_key.toggled.connect(
-            lambda checked: self.youtube_api_key.setEchoMode(
-                QLineEdit.Normal if checked else QLineEdit.Password
-            )
-        )
+        self.youtube_reveal_button = QToolButton()
+        self.youtube_reveal_button.setObjectName("RevealKeyButton")
+        self.youtube_reveal_button.setText("👁")
+        self.youtube_reveal_button.setCheckable(True)
+        self.youtube_reveal_button.setToolTip(self._text("show_api_key"))
+        self.youtube_reveal_button.toggled.connect(self._toggle_api_key_visibility)
+        key_row_layout.addWidget(self.youtube_api_key, 1)
+        key_row_layout.addWidget(self.youtube_reveal_button)
+
+        key_description = QLabel(self._text("youtube_key_description"))
+        key_description.setObjectName("AdvancedHelpText")
+        key_description.setWordWrap(True)
+        key_clarification = QLabel(self._text("youtube_key_clarification"))
+        key_clarification.setObjectName("AdvancedHelpText")
+        key_clarification.setWordWrap(True)
+        advanced_layout.addWidget(api_key_label)
+        advanced_layout.addWidget(key_row)
+        advanced_layout.addWidget(key_description)
+        advanced_layout.addWidget(key_clarification)
+        self.youtube_advanced_panel.hide()
+
         youtube_form.addRow(self.youtube_enabled)
         youtube_form.addRow(self._text("channel_or_live"), self.youtube_input)
-        source_note = QLabel(self._text("youtube_source_note"))
-        source_note.setWordWrap(True)
-        source_note.setStyleSheet("color: #AAB5CB; font-size: 12px;")
-        youtube_form.addRow(source_note)
-        youtube_form.addRow(self._text("youtube_data_api_key"), self.youtube_api_key)
-        youtube_form.addRow("", show_key)
-        youtube_note = QLabel(self._text("youtube_key_note"))
-        youtube_note.setWordWrap(True)
-        youtube_note.setStyleSheet("color: #AAB5CB; font-size: 12px;")
-        youtube_form.addRow(youtube_note)
+        youtube_form.addRow(self.youtube_status_card)
+        youtube_form.addRow(self.youtube_advanced_button)
+        youtube_form.addRow(self.youtube_advanced_panel)
+        self.youtube_api_key.textChanged.connect(self._on_youtube_api_key_changed)
+        self._update_advanced_button_text(False)
         layout.addWidget(youtube_box)
         layout.addStretch(1)
         return tab
@@ -204,12 +273,27 @@ class SettingsDialog(QDialog):
                 tr(language, "no_channel_message"),
             )
             return
+        if self.youtube_api_key.text().strip() and self._key_validation_state == "invalid":
+            QMessageBox.warning(
+                self,
+                tr(language, "youtube_invalid_key_title"),
+                tr(language, "youtube_invalid_key_save_message"),
+            )
+            return
         try:
             self.settings().normalized()
         except ValueError as exc:
             QMessageBox.warning(self, tr(language, "invalid_settings_title"), str(exc))
             return
         super().accept()
+
+    def done(self, result: int) -> None:
+        self._validation_debounce.stop()
+        self._validation_result_timer.stop()
+        self._stop_validator()
+        self.youtube_reveal_button.setChecked(False)
+        self.youtube_api_key.setEchoMode(QLineEdit.Password)
+        super().done(result)
 
     def settings(self) -> Settings:
         return Settings(
@@ -259,3 +343,164 @@ class SettingsDialog(QDialog):
         self.show_timestamps.setChecked(defaults.show_timestamps)
         self.show_platform.setChecked(defaults.show_platform_labels)
         self.hide_commands.setChecked(defaults.hide_commands)
+
+    def _toggle_youtube_advanced(self, expanded: bool) -> None:
+        self.youtube_advanced_panel.setVisible(expanded)
+        self._update_advanced_button_text(expanded)
+
+    def _update_advanced_button_text(self, expanded: bool) -> None:
+        arrow = "▴" if expanded else "▾"
+        self.youtube_advanced_button.setText(
+            f"{self._text('advanced_settings')} {arrow}"
+        )
+
+    def _toggle_api_key_visibility(self, visible: bool) -> None:
+        self.youtube_api_key.setEchoMode(
+            QLineEdit.Normal if visible else QLineEdit.Password
+        )
+        self.youtube_reveal_button.setToolTip(
+            self._text("hide_api_key" if visible else "show_api_key")
+        )
+
+    def _sync_initial_youtube_status(self) -> None:
+        key = self.youtube_api_key.text().strip()
+        if not key:
+            self._set_youtube_status("compatibility")
+            return
+        if self._youtube_connection_mode == "official_stream":
+            self._set_youtube_status("official")
+            return
+        if self._youtube_connection_mode == "official_polling":
+            self._set_youtube_status("official_fallback")
+            return
+        if self._youtube_connection_mode == "invalid_key":
+            self._set_youtube_status("invalid")
+            return
+        if self._youtube_connection_mode == "compatibility_fallback":
+            self._set_youtube_status("compatibility_fallback")
+            return
+        self._on_youtube_api_key_changed()
+
+    def _on_youtube_api_key_changed(self, _value: str = "") -> None:
+        self._validation_request_id += 1
+        self._validation_debounce.stop()
+        self._stop_validator()
+        key = self.youtube_api_key.text().strip()
+        if not key:
+            self._set_youtube_status("compatibility")
+            return
+        if (
+            key == self._initial_youtube_api_key
+            and self._youtube_connection_mode == "official_stream"
+        ):
+            self._set_youtube_status("official")
+            return
+        if (
+            key == self._initial_youtube_api_key
+            and self._youtube_connection_mode == "official_polling"
+        ):
+            self._set_youtube_status("official_fallback")
+            return
+        if (
+            key == self._initial_youtube_api_key
+            and self._youtube_connection_mode == "invalid_key"
+        ):
+            self._set_youtube_status("invalid")
+            return
+        self._set_youtube_status("checking")
+        self._validation_debounce.start()
+
+    def _start_youtube_key_validation(self) -> None:
+        key = self.youtube_api_key.text().strip()
+        if not key:
+            return
+        self._stop_validator()
+        self._validator = YouTubeKeyValidator(
+            self._validation_results,
+            key,
+            self._validation_request_id,
+        )
+        self._validator.start()
+        self._validation_result_timer.start()
+
+    def _drain_validation_results(self) -> None:
+        while True:
+            try:
+                result = self._validation_results.get_nowait()
+            except queue.Empty:
+                break
+            self._apply_validation_result(result)
+        validator = self._validator
+        if validator is None or not validator.is_alive():
+            self._validation_result_timer.stop()
+            self._validator = None
+
+    def _apply_validation_result(self, result: YouTubeKeyValidationResult) -> None:
+        if result.request_id != self._validation_request_id:
+            return
+        if not self.youtube_api_key.text().strip():
+            self._set_youtube_status("compatibility")
+        elif result.status == "valid":
+            self._set_youtube_status("valid")
+        elif result.status == "invalid":
+            self._set_youtube_status("invalid")
+        else:
+            self._set_youtube_status("unavailable")
+
+    def _stop_validator(self) -> None:
+        validator = self._validator
+        self._validator = None
+        if validator is not None:
+            validator.stop()
+
+    def _set_youtube_status(self, status: str) -> None:
+        keys = {
+            "compatibility": (
+                "youtube_mode_compatibility_title",
+                "youtube_mode_compatibility_detail",
+                "info",
+            ),
+            "official": (
+                "youtube_mode_official_title",
+                "youtube_mode_official_detail",
+                "official",
+            ),
+            "official_fallback": (
+                "youtube_mode_official_fallback_title",
+                "youtube_mode_official_fallback_detail",
+                "warning",
+            ),
+            "valid": (
+                "youtube_key_valid_title",
+                "youtube_key_valid_detail",
+                "official",
+            ),
+            "invalid": (
+                "youtube_key_invalid_title",
+                "youtube_key_invalid_detail",
+                "warning",
+            ),
+            "unavailable": (
+                "youtube_key_unavailable_title",
+                "youtube_key_unavailable_detail",
+                "warning",
+            ),
+            "checking": (
+                "youtube_key_checking_title",
+                "youtube_key_checking_detail",
+                "info",
+            ),
+            "compatibility_fallback": (
+                "youtube_mode_fallback_title",
+                "youtube_mode_fallback_detail",
+                "warning",
+            ),
+        }
+        title_key, detail_key, kind = keys.get(status, keys["checking"])
+        self._key_validation_state = status
+        self.youtube_status_title.setText(self._text(title_key))
+        self.youtube_status_detail.setText(self._text(detail_key))
+        self.youtube_status_card.setProperty("statusKind", kind)
+        style = self.youtube_status_card.style()
+        style.unpolish(self.youtube_status_card)
+        style.polish(self.youtube_status_card)

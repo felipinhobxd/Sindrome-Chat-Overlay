@@ -117,9 +117,11 @@ jobs:
 
             The interface starts in English and can be changed to Brazilian Portuguese under Settings → Language. Automatic scrolling and message sounds are enabled by default.
 
-            The app now checks the official GitHub Releases API in a background thread at startup. When a newer stable version is available, it asks before opening the trusted release download page.
+            YouTube setup is now simpler: the main screen shows only the channel/live link and the real connection mode. The optional Data API key lives in Advanced settings, stays masked, is validated without blocking the UI, and distinguishes invalid credentials from temporary network or quota failures.
 
-            Update checks require no GitHub account or token, can be disabled under Appearance, fail silently when offline, and never download or execute an installer without user action.
+            Chat messages now use a cleaner game-HUD layout: metadata stays transparent, only the text/emote content receives a compact dark background, spacing is tighter, and a discreet `⋮⋮` handle makes the draggable header obvious even at 0% panel opacity.
+
+            The existing official `liveChatMessages.streamList`, automatic live discovery, compatibility mode, DPAPI protection, Twitch emotes, badges, and individual username colours are preserved.
 
             **Recommended:** download `SindromeChatOverlay-Setup-v${{ env.VERSION }}.exe` for a standard Windows installation with shortcuts and an uninstaller.
 

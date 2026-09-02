@@ -6,11 +6,72 @@ import unittest
 
 @unittest.skipUnless(sys.platform == "win32", "Qt UI smoke test runs on the Windows release job")
 class WindowsUiSmokeTests(unittest.TestCase):
+    def test_youtube_settings_are_simple_masked_translated_and_stateful(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from PySide6.QtWidgets import QApplication, QLineEdit
+
+        from sindrome_overlay.settings import Settings, SettingsStore
+        from sindrome_overlay.ui.settings_dialog import SettingsDialog
+        from sindrome_overlay.youtube_key import YouTubeKeyValidationResult
+
+        app = QApplication.instance() or QApplication([])
+        dialog = SettingsDialog(
+            Settings(language="en", youtube_api_key=""),
+            youtube_connection_mode="compatibility",
+        )
+        dialog.show()
+        app.processEvents()
+        self.assertIn("Compatibility mode", dialog.youtube_status_title.text())
+        self.assertTrue(dialog.youtube_advanced_panel.isHidden())
+
+        dialog.youtube_advanced_button.click()
+        app.processEvents()
+        self.assertFalse(dialog.youtube_advanced_panel.isHidden())
+        self.assertEqual(dialog.youtube_api_key.echoMode(), QLineEdit.Password)
+
+        secret = "AIza-test-secret"
+        dialog.youtube_api_key.setText(secret)
+        dialog._validation_debounce.stop()
+        request_id = dialog._validation_request_id
+        dialog._apply_validation_result(YouTubeKeyValidationResult(request_id, "valid"))
+        self.assertIn("Valid API key", dialog.youtube_status_title.text())
+
+        dialog.youtube_reveal_button.click()
+        self.assertEqual(dialog.youtube_api_key.echoMode(), QLineEdit.Normal)
+        dialog.youtube_reveal_button.click()
+        self.assertEqual(dialog.youtube_api_key.echoMode(), QLineEdit.Password)
+
+        dialog._apply_validation_result(YouTubeKeyValidationResult(request_id, "invalid"))
+        self.assertIn("invalid", dialog.youtube_status_title.text().lower())
+        dialog._apply_validation_result(YouTubeKeyValidationResult(request_id, "unavailable"))
+        self.assertIn("not verified", dialog.youtube_status_title.text().lower())
+        dialog.youtube_api_key.clear()
+        self.assertIn("Compatibility mode", dialog.youtube_status_title.text())
+        dialog.close()
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = SettingsStore(Path(directory) / "settings.json")
+            store.save(Settings(language="pt-BR", youtube_api_key=secret))
+            reopened = SettingsDialog(
+                store.load(),
+                youtube_connection_mode="official_stream",
+            )
+            reopened.show()
+            app.processEvents()
+            self.assertIn("API oficial", reopened.youtube_status_title.text())
+            self.assertIn("Configurações avançadas", reopened.youtube_advanced_button.text())
+            self.assertEqual(reopened.youtube_api_key.text(), secret)
+            self.assertEqual(reopened.youtube_api_key.echoMode(), QLineEdit.Password)
+            self.assertTrue(reopened.youtube_advanced_panel.isHidden())
+            reopened.close()
+
     def test_message_card_renders_cached_emote_badge_and_coloured_author(self) -> None:
         from pathlib import Path
 
         from PySide6.QtCore import QObject, QUrl, Signal
-        from PySide6.QtWidgets import QApplication
+        from PySide6.QtWidgets import QApplication, QLabel
 
         from sindrome_overlay.models import ChatBadge, ChatEmote, ChatMessage
         from sindrome_overlay.settings import Settings
@@ -48,6 +109,8 @@ class WindowsUiSmokeTests(unittest.TestCase):
             badge_refs=(ChatBadge("moderator", "1", "444"),),
         )
         card = MessageCard(message, Settings(), cache)
+        card.resize(500, 150)
+        card.show()
         app.processEvents()
 
         emote_labels = card.findChildren(EmoteMessageLabel)
@@ -56,6 +119,45 @@ class WindowsUiSmokeTests(unittest.TestCase):
         self.assertIn("<img", emote_labels[0].text())
         self.assertEqual(len(badge_labels), 1)
         self.assertFalse(badge_labels[0].pixmap().isNull())
+        author_labels = card.findChildren(QLabel, "AuthorName")
+        self.assertEqual(len(author_labels), 1)
+        self.assertIn("background: transparent", author_labels[0].styleSheet())
+        self.assertNotIn("border-left", card.styleSheet())
+        self.assertLess(card.message_bubble.width(), card.width())
+
+        emote_only = MessageCard(
+            ChatMessage(
+                "twitch",
+                "EmoteUser",
+                "Kappa",
+                author_id="emote-user",
+                emotes=(ChatEmote("25", 0, 5, "Kappa"),),
+            ),
+            Settings(),
+            cache,
+        )
+        emote_only.resize(500, 140)
+        emote_only.show()
+        app.processEvents()
+        self.assertLess(emote_only.message_bubble.width(), 180)
+
+        long_card = MessageCard(
+            ChatMessage(
+                "youtube",
+                "Long Name Unicode 😀",
+                "A long message " * 30,
+                author_id="long-user",
+            ),
+            Settings(window_width=340),
+            None,
+        )
+        long_card.resize(340, 300)
+        long_card.show()
+        app.processEvents()
+        self.assertLessEqual(long_card.message_bubble.width(), long_card.width())
+        self.assertGreater(long_card.message_bubble.height(), emote_only.message_bubble.height())
+        long_card.deleteLater()
+        emote_only.deleteLater()
         card.deleteLater()
 
     def test_overlay_integrates_mixed_messages_opacity_resize_and_lifecycle(self) -> None:
@@ -63,7 +165,8 @@ class WindowsUiSmokeTests(unittest.TestCase):
         import tempfile
         from pathlib import Path
 
-        from PySide6.QtCore import Qt
+        from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+        from PySide6.QtGui import QMouseEvent
         from PySide6.QtWidgets import QApplication
 
         from sindrome_overlay.models import ChatMessage
@@ -92,6 +195,11 @@ class WindowsUiSmokeTests(unittest.TestCase):
             self.assertTrue(window.windowFlags() & Qt.NoDropShadowWindowHint)
             self.assertIn("background-color: rgba(8, 11, 19, 0);", window.styleSheet())
             self.assertIn("border: 1px solid rgba(255, 255, 255, 0);", window.styleSheet())
+            self.assertIn("QFrame#ChatCard", window.styleSheet())
+            self.assertIn("background-color: rgba(3, 5, 9, 199);", window.styleSheet())
+            self.assertEqual(window.header.cursor().shape(), Qt.SizeAllCursor)
+            self.assertEqual(window.settings_button.cursor().shape(), Qt.ArrowCursor)
+            self.assertTrue(window.drag_indicator.isVisible())
 
             for index in range(40):
                 platform = "twitch" if index % 2 == 0 else "youtube"
@@ -117,6 +225,57 @@ class WindowsUiSmokeTests(unittest.TestCase):
             self.assertEqual(len(window.cards), 20)
             self.assertEqual(window.messages[-1].message_id, "mixed-39")
             self.assertEqual({message.platform for message in window.messages}, {"twitch", "youtube"})
+            self.assertEqual(
+                window.scroll.verticalScrollBar().value(),
+                window.scroll.verticalScrollBar().maximum(),
+            )
+
+            for opacity in (100, 50, 0):
+                window.settings.background_opacity = opacity
+                window._apply_visual_settings()
+                app.processEvents()
+                start_position = window.pos()
+                local_start = QPoint(25, 18)
+                global_start = window.header.mapToGlobal(local_start)
+                delta = QPoint(16, 11)
+                window.header.mousePressEvent(
+                    QMouseEvent(
+                        QEvent.MouseButtonPress,
+                        QPointF(local_start),
+                        QPointF(global_start),
+                        Qt.LeftButton,
+                        Qt.LeftButton,
+                        Qt.NoModifier,
+                    )
+                )
+                window.header.mouseMoveEvent(
+                    QMouseEvent(
+                        QEvent.MouseMove,
+                        QPointF(local_start + delta),
+                        QPointF(global_start + delta),
+                        Qt.NoButton,
+                        Qt.LeftButton,
+                        Qt.NoModifier,
+                    )
+                )
+                window.header.mouseReleaseEvent(
+                    QMouseEvent(
+                        QEvent.MouseButtonRelease,
+                        QPointF(local_start + delta),
+                        QPointF(global_start + delta),
+                        Qt.LeftButton,
+                        Qt.NoButton,
+                        Qt.NoModifier,
+                    )
+                )
+                app.processEvents()
+                self.assertEqual(window.pos(), start_position + delta)
+
+            position_before_button = window.pos()
+            window.clear_button.click()
+            app.processEvents()
+            self.assertEqual(window.pos(), position_before_button)
+            self.assertEqual(window.messages, [])
 
             window.resize(620, 410)
             app.processEvents()

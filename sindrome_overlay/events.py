@@ -16,3 +16,4 @@ class ProviderEvent:
     text: str = ""
     message_id: str = ""
     state: str = ""
+    mode: str = ""

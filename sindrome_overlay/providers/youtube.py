@@ -458,7 +458,14 @@ class YouTubeProvider(BaseProvider):
         delay = 3.0
         while not self.stop_event.is_set():
             try:
-                self.emit_status("connecting", tr(self.language, "searching_live"))
+                configured_mode = (
+                    "official_configured" if self.data_api_key else "compatibility"
+                )
+                self.emit_status(
+                    "connecting",
+                    tr(self.language, "searching_live"),
+                    mode=configured_mode,
+                )
                 video_id = self._resolve_video_id()
                 if self.data_api_key:
                     self._run_official_api(video_id)
@@ -466,7 +473,11 @@ class YouTubeProvider(BaseProvider):
                     self._run_innertube(video_id)
                 delay = 3.0
             except StreamOffline:
-                self.emit_status("waiting", tr(self.language, "waiting_next_live"))
+                self.emit_status(
+                    "waiting",
+                    tr(self.language, "waiting_next_live"),
+                    mode=("official_configured" if self.data_api_key else "compatibility"),
+                )
                 if self.wait(30):
                     break
             except ChatDisabled:
@@ -478,7 +489,11 @@ class YouTubeProvider(BaseProvider):
                 if self.wait(30):
                     break
             except ApiKeyRejected:
-                self.emit_status("error", tr(self.language, "youtube_api_key_rejected"))
+                self.emit_status(
+                    "error",
+                    tr(self.language, "youtube_api_key_rejected"),
+                    mode="invalid_key",
+                )
                 if self.wait(60):
                     break
             except ChatUnavailable:
@@ -500,7 +515,7 @@ class YouTubeProvider(BaseProvider):
                 if self.wait(delay):
                     break
                 delay = min(delay * 2, 60.0)
-        self.emit_status("stopped", tr(self.language, "disconnected"))
+        self.emit_status("stopped", tr(self.language, "disconnected"), mode="stopped")
 
     def _resolve_video_id(self) -> str:
         direct_id = youtube_video_id(self.user_input)
@@ -532,7 +547,11 @@ class YouTubeProvider(BaseProvider):
     def _run_innertube(self, video_id: str) -> None:
         bootstrap = self._bootstrap_chat(video_id)
         continuation = bootstrap.continuation
-        self.emit_status("connected", tr(self.language, "live_auto"))
+        self.emit_status(
+            "connected",
+            tr(self.language, "live_auto"),
+            mode="compatibility",
+        )
 
         failures = 0
         while not self.stop_event.is_set():
@@ -663,13 +682,21 @@ class YouTubeProvider(BaseProvider):
             self._official_live_chat_id = live_chat_id
             self._official_page_token = ""
 
-        self.emit_status("connected", tr(self.language, "live_official_streaming"))
+        self.emit_status(
+            "connected",
+            tr(self.language, "live_official_streaming"),
+            mode="official_stream",
+        )
         try:
             self._run_official_stream(video_id, live_chat_id)
         except StreamingTransportUnavailable:
             if self.stop_event.is_set():
                 return
-            self.emit_status("connected", tr(self.language, "live_official_polling"))
+            self.emit_status(
+                "connected",
+                tr(self.language, "live_official_polling"),
+                mode="official_polling",
+            )
             self._run_official_polling(live_chat_id)
 
     def _official_live_chat_id_for_video(self, video_id: str) -> str:

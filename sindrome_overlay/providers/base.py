@@ -26,13 +26,14 @@ class BaseProvider(threading.Thread):
     def emit_message(self, message: ChatMessage) -> None:
         self.events.put(ProviderEvent(kind="message", platform=self.platform, message=message))
 
-    def emit_status(self, state: str, text: str) -> None:
+    def emit_status(self, state: str, text: str, *, mode: str = "") -> None:
         self.events.put(
             ProviderEvent(
                 kind="status",
                 platform=self.platform,
                 state=state,
                 text=text,
+                mode=mode,
             )
         )
 

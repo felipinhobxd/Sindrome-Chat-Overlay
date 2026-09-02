@@ -36,7 +36,8 @@ You can replace either channel in the app settings.
 - Automatically scrolls to keep the newest message visible.
 - Plays a short sound for each new Twitch or YouTube message.
 - Removes a message when the platform reports that it was deleted.
-- Transparent, borderless, resizable, and always-on-top window.
+- HUD-style message rows with transparent metadata and a compact dark background only behind message text and emotes.
+- Transparent, borderless, resizable, and always-on-top window with a visible drag handle in the header.
 - Click-through mode prevents the overlay from capturing mouse input while gaming.
 - Native Windows global `Ctrl + Shift + O` shortcut locks or unlocks mouse clicks with one press, even when another application has focus.
 - System tray menu for showing, hiding, configuring, locking, or closing the app.
@@ -60,7 +61,7 @@ The main window, settings, system tray, notifications, platform statuses, automa
 
 ## How to use
 
-- Drag the top bar to move the overlay.
+- Drag the top bar marked with `⋮⋮` to move the overlay.
 - Drag the lower-right corner to resize it.
 - Select the gear button to change channels, language, and appearance.
 - Automatic scrolling and message sounds can be disabled independently.
@@ -78,7 +79,10 @@ Exclusive fullscreen is different: a game that owns the display surface can bypa
 The settings intentionally contain only two YouTube inputs:
 
 - **Channel or live stream:** a channel handle/URL or a specific live video URL. The app resolves this to the active Video ID automatically.
-- **YouTube Data API key (optional):** enables the official low-latency API path. The field is masked. On Windows, the saved value is encrypted for the current Windows account with DPAPI and is never written to the technical log.
+- **Connection status:** clearly shows whether compatibility mode or the official API is actually selected. Internal IDs and transport details are not shown in the main settings area.
+- **Advanced settings:** collapsed by default and contains the optional YouTube Data API key. The field is masked, includes a temporary reveal button, and is explicitly distinguished from a broadcast Stream Key.
+
+The key is checked in a background thread with a minimal official API request before a newly entered value is accepted. A rejected credential is shown as invalid, while timeouts, server failures, quota limits, and offline conditions are shown as temporarily unverifiable instead of being misreported as an invalid key. Removing the key updates the screen to compatibility mode immediately. On Windows, the saved value is encrypted for the current Windows account with DPAPI and is never written to the technical log.
 
 When a Data API key is present, the app:
 
@@ -158,7 +162,7 @@ dist\SindromeChatOverlay.exe
 The release workflow uses [Inno Setup](https://jrsoftware.org/isinfo.php) and `installer/SindromeChatOverlay.iss` to create the installer. After building the portable executable, a local installer can be compiled with:
 
 ```powershell
-& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DAppVersion=1.5.0 installer\SindromeChatOverlay.iss
+& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DAppVersion=1.6.0 installer\SindromeChatOverlay.iss
 ```
 
 The installer uses a stable application ID, supports in-place upgrades, installs per user without requiring administrator access, creates shortcuts, and includes an uninstaller.
