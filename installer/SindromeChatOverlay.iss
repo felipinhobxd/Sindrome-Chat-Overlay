@@ -58,4 +58,16 @@ Name: "{group}\Uninstall Sindrome Chat Overlay"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\Sindrome Chat Overlay"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
-Filename: "{cmd}"; Parameters: "/D /S /C ""set ""PYINSTALLER_RESET_ENVIRONMENT=1"" & set ""_PYI_ARCHIVE_FILE="" & set ""_PYI_APPLICATION_HOME_DIR="" & set ""_PYI_PARENT_PROCESS_LEVEL="" & set ""_PYI_SPLASH_IPC="" & start """" /D ""{app}"" ""{app}\{#AppExeName}"""""; Description: "{cm:LaunchProgram,Sindrome Chat Overlay}"; Flags: nowait postinstall skipifsilent runhidden
+Filename: "{app}\{#AppExeName}"; Description: "{cm:LaunchProgram,Sindrome Chat Overlay}"; Flags: nowait postinstall skipifsilent; BeforeInstall: PrepareCleanPyInstallerLaunch
+
+[Code]
+function SetEnvironmentVariable(Name: string; Value: string): Boolean;
+  external 'SetEnvironmentVariableW@kernel32.dll stdcall';
+
+procedure PrepareCleanPyInstallerLaunch;
+begin
+  if SetEnvironmentVariable('PYINSTALLER_RESET_ENVIRONMENT', '1') then
+    Log('Prepared clean PyInstaller environment for the post-install launch.')
+  else
+    Log('Warning: unable to set PYINSTALLER_RESET_ENVIRONMENT for the post-install launch.');
+end;
