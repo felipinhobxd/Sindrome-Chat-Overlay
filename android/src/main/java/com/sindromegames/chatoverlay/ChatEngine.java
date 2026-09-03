@@ -19,13 +19,15 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicLong;
 
-public final class ChatEngine implements ProviderCallback {
+public final class ChatEngine {
     private static final String TAG = "ChatEngine";
 
     private final Context context;
     private final NotificationSoundPlayer sounds = new NotificationSoundPlayer();
     private final Object lock = new Object();
+    private final AtomicLong generation = new AtomicLong();
     private ExecutorService executor;
     private List<ChatProvider> providers = Collections.emptyList();
     private volatile AppSettings settings;
@@ -37,27 +39,28 @@ public final class ChatEngine implements ProviderCallback {
 
     public void start() {
         synchronized (lock) {
+            long currentGeneration = generation.incrementAndGet();
             try {
                 stopLocked();
+                ChatBus.updateStopped();
                 settings = AppSettings.load(context);
                 ChatBus.setMaximumMessages(settings.maxMessages);
+                ProviderCallback callback = new GenerationCallback(currentGeneration);
                 ArrayList<ChatProvider> next = new ArrayList<>(2);
                 if (settings.twitchEnabled) {
                     String channel = UrlNormalizer.twitchChannel(settings.twitchChannel);
-                    if (!channel.isEmpty()) next.add(new TwitchProvider(this, channel));
+                    if (!channel.isEmpty()) next.add(new TwitchProvider(callback, channel));
                 }
                 if (settings.youtubeEnabled) {
                     String input = UrlNormalizer.youtubeInput(settings.youtubeInput);
                     if (!input.isEmpty()) {
-                        next.add(new YouTubeProvider(this, input,
+                        next.add(new YouTubeProvider(callback, input,
                                 new SecureStore(context).readApiKey(), settings.language));
                     }
                 }
                 providers = next;
-                if (next.isEmpty()) {
-                    ChatBus.updateRunning(false);
-                    return;
-                }
+                if (next.isEmpty()) return;
+
                 executor = Executors.newFixedThreadPool(next.size(), runnable -> {
                     Thread thread = new Thread(runnable, "chat-provider");
                     thread.setDaemon(true);
@@ -66,13 +69,12 @@ public final class ChatEngine implements ProviderCallback {
                     return thread;
                 });
                 ChatBus.updateRunning(true);
-                for (ChatProvider provider : next) executor.submit(provider);
+                for (ChatProvider provider : next) executor.execute(provider);
             } catch (RuntimeException failure) {
+                generation.incrementAndGet();
                 Log.e(TAG, "Unable to start chat providers", failure);
                 stopLocked();
-                ChatBus.updateRunning(false);
-                ChatBus.updateStatus("twitch", "stopped", YouTubeMode.STOPPED);
-                ChatBus.updateStatus("youtube", "stopped", YouTubeMode.STOPPED);
+                ChatBus.updateStopped();
             }
         }
     }
@@ -80,8 +82,11 @@ public final class ChatEngine implements ProviderCallback {
     public void restart() { start(); }
 
     public void stop() {
-        synchronized (lock) { stopLocked(); }
-        ChatBus.updateRunning(false);
+        synchronized (lock) {
+            generation.incrementAndGet();
+            stopLocked();
+            ChatBus.updateStopped();
+        }
     }
 
     public void destroy() {
@@ -104,25 +109,48 @@ public final class ChatEngine implements ProviderCallback {
         }
     }
 
-    @Override public void onMessage(ChatMessage message) {
-        if (message == null) return;
-        AppSettings current = settings;
-        if (current.hideCommands && message.text.startsWith("!")) return;
-        ChatBus.publish(message);
-        if (current.soundEnabled) {
-            String preset = message.platform.equals("twitch")
-                    ? current.twitchSound : current.youtubeSound;
-            sounds.play(preset, current.soundVolume, current.soundMinIntervalMs, false);
+    private final class GenerationCallback implements ProviderCallback {
+        private final long expectedGeneration;
+
+        GenerationCallback(long expectedGeneration) {
+            this.expectedGeneration = expectedGeneration;
         }
-    }
 
-    @Override public void onDelete(String platform, String messageId) {
-        ChatBus.delete(platform, messageId);
-    }
+        private boolean active() {
+            return generation.get() == expectedGeneration;
+        }
 
-    @Override public void onClear(String platform) { ChatBus.clearPlatform(platform); }
+        @Override public void onMessage(ChatMessage message) {
+            if (message == null) return;
+            synchronized (lock) {
+                if (!active()) return;
+                AppSettings current = settings;
+                if (current.hideCommands && message.text.startsWith("!")) return;
+                ChatBus.publish(message);
+                if (current.soundEnabled) {
+                    String preset = message.platform.equals("twitch")
+                            ? current.twitchSound : current.youtubeSound;
+                    sounds.play(preset, current.soundVolume, current.soundMinIntervalMs, false);
+                }
+            }
+        }
 
-    @Override public void onStatus(String platform, String status, YouTubeMode youtubeMode) {
-        ChatBus.updateStatus(platform, status, youtubeMode);
+        @Override public void onDelete(String platform, String messageId) {
+            synchronized (lock) {
+                if (active()) ChatBus.delete(platform, messageId);
+            }
+        }
+
+        @Override public void onClear(String platform) {
+            synchronized (lock) {
+                if (active()) ChatBus.clearPlatform(platform);
+            }
+        }
+
+        @Override public void onStatus(String platform, String status, YouTubeMode youtubeMode) {
+            synchronized (lock) {
+                if (active()) ChatBus.updateStatus(platform, status, youtubeMode);
+            }
+        }
     }
 }

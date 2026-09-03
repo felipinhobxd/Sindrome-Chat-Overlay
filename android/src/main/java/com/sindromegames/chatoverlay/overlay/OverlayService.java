@@ -80,7 +80,7 @@ public final class OverlayService extends Service {
             return START_STICKY;
         } catch (RuntimeException failure) {
             Log.e(TAG, "Unhandled overlay service action: " + action, failure);
-            ChatBus.updateRunning(false);
+            ChatBus.updateStopped();
             refreshNotification();
             return START_NOT_STICKY;
         }
