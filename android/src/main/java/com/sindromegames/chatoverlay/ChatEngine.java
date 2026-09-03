@@ -19,7 +19,6 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.RejectedExecutionException;
 
 public final class ChatEngine implements ProviderCallback {
     private static final String TAG = "ChatEngine";
@@ -68,7 +67,7 @@ public final class ChatEngine implements ProviderCallback {
                 });
                 ChatBus.updateRunning(true);
                 for (ChatProvider provider : next) executor.submit(provider);
-            } catch (RejectedExecutionException | RuntimeException failure) {
+            } catch (RuntimeException failure) {
                 Log.e(TAG, "Unable to start chat providers", failure);
                 stopLocked();
                 ChatBus.updateRunning(false);
