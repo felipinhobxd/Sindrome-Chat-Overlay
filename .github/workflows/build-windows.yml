@@ -243,12 +243,12 @@ jobs:
       - name: Refuse to overwrite an existing release tag
         shell: pwsh
         run: |
-          git ls-remote --exit-code --tags origin "refs/tags/$env:RELEASE_TAG" *> $null
-          if ($LASTEXITCODE -eq 0) {
-            throw "Release tag $env:RELEASE_TAG appeared while this build was running; refusing to overwrite it."
-          }
-          if ($LASTEXITCODE -ne 2) {
+          $existingTag = git ls-remote --tags origin "refs/tags/$env:RELEASE_TAG"
+          if ($LASTEXITCODE -ne 0) {
             throw "Unable to verify whether release tag $env:RELEASE_TAG already exists."
+          }
+          if ($existingTag) {
+            throw "Release tag $env:RELEASE_TAG appeared while this build was running; refusing to overwrite it."
           }
 
       - name: Upload workflow artifact
