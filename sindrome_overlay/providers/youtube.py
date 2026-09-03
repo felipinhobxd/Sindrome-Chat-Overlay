@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import json
 import re
 from collections import deque
@@ -10,15 +11,33 @@ from queue import Queue
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-import grpc
 import requests
 
 from ..events import ProviderEvent
 from ..i18n import normalize_language, tr
 from ..models import ChatMessage, clean_text, parse_timestamp_usec
 from ..url_utils import normalize_youtube_input, youtube_video_id
-from ..youtube_grpc import stream_list_pb2, stream_list_pb2_grpc
 from .base import BaseProvider
+
+
+class _LazyModule:
+    """Import a heavyweight optional module only when an attribute is first used."""
+
+    def __init__(self, module_name: str) -> None:
+        self._module_name = module_name
+        self._module: Any | None = None
+
+    def __getattr__(self, name: str) -> Any:
+        module = self._module
+        if module is None:
+            module = importlib.import_module(self._module_name)
+            self._module = module
+        return getattr(module, name)
+
+
+grpc = _LazyModule("grpc")
+stream_list_pb2 = _LazyModule("sindrome_overlay.youtube_grpc.stream_list_pb2")
+stream_list_pb2_grpc = _LazyModule("sindrome_overlay.youtube_grpc.stream_list_pb2_grpc")
 
 _VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 _VIDEO_ID_IN_HTML = re.compile(r'(?:"videoId"\s*:\s*"|watch\?v=|youtu\.be/)([A-Za-z0-9_-]{11})')
