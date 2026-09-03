@@ -64,8 +64,26 @@ jobs:
           name: SindromeChatOverlay-Android-debug-v${{ env.VERSION }}
           path: android/build/outputs/apk/debug/android-debug.apk
 
-      - name: Check release-signing secrets
+      - name: Verify release tag belongs to this commit
         if: github.event_name != 'pull_request'
+        id: release_target
+        shell: bash
+        env:
+          TARGET_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          tag_sha=$(git ls-remote origin "refs/tags/$RELEASE_TAG" | awk '{print $1}' | head -n 1)
+          if [ -n "$tag_sha" ] && [ "$tag_sha" = "$TARGET_SHA" ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "$RELEASE_TAG points to the workflow commit; signed Android assets may be attached."
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping release attachment: $RELEASE_TAG does not point to $TARGET_SHA."
+          fi
+
+      - name: Check release-signing secrets
+        if: >-
+          github.event_name != 'pull_request' &&
+          steps.release_target.outputs.publish == 'true'
         id: signing
         shell: bash
         env:
@@ -123,6 +141,7 @@ jobs:
       - name: Attach signed APK to GitHub Release
         if: >-
           steps.signing.outputs.configured == 'true' &&
+          steps.release_target.outputs.publish == 'true' &&
           github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
