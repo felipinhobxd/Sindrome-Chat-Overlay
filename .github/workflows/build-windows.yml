@@ -26,6 +26,16 @@ jobs:
           python-version: "3.12"
           cache: pip
 
+      - name: Read project version
+        shell: pwsh
+        run: |
+          $content = Get-Content pyproject.toml -Raw
+          if ($content -notmatch '(?m)^version = "([^"]+)"') {
+            throw "Version not found in pyproject.toml"
+          }
+          $version = $Matches[1]
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
       - name: Install dependencies
         run: python -m pip install -r requirements.txt -r requirements-build.txt
 
@@ -41,6 +51,33 @@ jobs:
 
       - name: Verify PyInstaller packaging
         run: python -m PyInstaller --noconfirm --clean SindromeChatOverlay.spec
+
+      - name: Include installer documentation
+        shell: pwsh
+        run: |
+          Copy-Item README.md dist/README.md
+          Copy-Item THIRD_PARTY_NOTICES.md dist/THIRD_PARTY_NOTICES.md
+          Copy-Item LICENSE dist/LICENSE.txt
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress --yes
+
+      - name: Verify Windows installer packaging
+        shell: pwsh
+        run: |
+          $compiler = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $compiler)) {
+            throw "Inno Setup compiler was not found at $compiler"
+          }
+          & $compiler "/DAppVersion=$env:VERSION" installer/SindromeChatOverlay.iss
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+          $setup = "release/SindromeChatOverlay-Setup-v$env:VERSION.exe"
+          if (-not (Test-Path $setup)) {
+            throw "Installer was not produced at $setup"
+          }
 
   build:
     if: github.event_name != 'pull_request'
