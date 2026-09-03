@@ -17,6 +17,7 @@ import com.sindromegames.chatoverlay.model.ChatMessage;
 import com.sindromegames.chatoverlay.settings.AppSettings;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 public final class ChatListView extends RecyclerView implements ChatBus.Listener {
@@ -26,6 +27,7 @@ public final class ChatListView extends RecyclerView implements ChatBus.Listener
     private final MessageAdapter messageAdapter;
     private AppSettings settings;
     private boolean registered;
+    private boolean scrollScheduled;
 
     public ChatListView(Context context) {
         super(context);
@@ -57,6 +59,7 @@ public final class ChatListView extends RecyclerView implements ChatBus.Listener
             registered = false;
             ChatBus.unregister(this);
         }
+        scrollScheduled = false;
         super.onDetachedFromWindow();
     }
 
@@ -72,7 +75,12 @@ public final class ChatListView extends RecyclerView implements ChatBus.Listener
     }
 
     @Override public void onMessage(ChatMessage message) {
-        messageAdapter.append(message);
+        messageAdapter.appendAll(Collections.singletonList(message));
+        scrollIfNeeded();
+    }
+
+    @Override public void onMessages(List<ChatMessage> messages) {
+        messageAdapter.appendAll(messages);
         scrollIfNeeded();
     }
 
@@ -84,8 +92,11 @@ public final class ChatListView extends RecyclerView implements ChatBus.Listener
     @Override public void onState(ChatBus.State state) {}
 
     private void scrollIfNeeded() {
-        if (!settings.autoScroll) return;
-        post(() -> {
+        if (!settings.autoScroll || scrollScheduled) return;
+        scrollScheduled = true;
+        postOnAnimation(() -> {
+            scrollScheduled = false;
+            if (!isAttachedToWindow()) return;
             int count = messageAdapter.getItemCount();
             if (count > 0) scrollToPosition(count - 1);
         });
@@ -138,21 +149,25 @@ public final class ChatListView extends RecyclerView implements ChatBus.Listener
             notifyDataSetChanged();
         }
 
-        void append(ChatMessage message) {
+        void appendAll(List<ChatMessage> messages) {
+            if (messages == null || messages.isEmpty()) return;
+
             boolean wasEmpty = items.isEmpty();
-            items.add(message);
+            int oldSize = items.size();
+            items.addAll(messages);
+
             int limit = Math.max(20, settings.maxMessages);
-            if (items.size() > limit) {
-                items.remove(0);
-                if (wasEmpty) notifyDataSetChanged();
-                else {
-                    notifyItemRemoved(0);
-                    notifyItemInserted(items.size() - 1);
-                }
+            int removeCount = Math.max(0, items.size() - limit);
+            if (removeCount > 0) items.subList(0, removeCount).clear();
+
+            if (wasEmpty || removeCount > oldSize) {
+                notifyDataSetChanged();
                 return;
             }
-            if (wasEmpty) notifyDataSetChanged();
-            else notifyItemInserted(items.size() - 1);
+
+            if (removeCount > 0) notifyItemRangeRemoved(0, removeCount);
+            int retainedOld = oldSize - removeCount;
+            notifyItemRangeInserted(retainedOld, messages.size());
         }
     }
 
