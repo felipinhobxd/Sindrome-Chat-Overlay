@@ -14,6 +14,8 @@
     <string name="waiting_live">Aguardando a próxima live</string>
     <string name="permission_overlay_title">Permitir overlay flutuante</string>
     <string name="permission_overlay_message">O Android precisa permitir que o Sindrome Chat Overlay apareça sobre outros aplicativos. Ative a permissão na próxima tela e volte aqui.</string>
+    <string name="overlay_permission_restricted_help">O Android ainda não concedeu a permissão de overlay. Se o sistema disser que a configuração está bloqueada ou que o app pode ser perigoso, abra as informações do aplicativo e use “Permitir configurações restritas”, caso essa opção exista no seu aparelho. Depois ative “Exibir sobre outros apps”. O Sindrome Chat Overlay não consegue conceder essa permissão especial sozinho.</string>
+    <string name="open_app_settings">Abrir informações do app</string>
     <string name="permission_notifications_message">A notificação mantém o chat conectado enquanto o overlay flutuante está ativo.</string>
     <string name="overlay_permission_missing">A permissão de overlay não foi concedida.</string>
     <string name="overlay_drag_hint">Sindrome Chat Overlay  ⋮⋮</string>
