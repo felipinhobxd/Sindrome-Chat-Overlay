@@ -23,13 +23,13 @@ import okhttp3.Response;
 
 public final class EmoteLoader {
     private static volatile EmoteLoader instance;
-    private final LruCache<String, Bitmap> memory = new LruCache<>(8192) {
+    private final LruCache<String, Bitmap> memory = new LruCache<>(memoryCacheSizeKb()) {
         @Override protected int sizeOf(String key, Bitmap value) {
             return Math.max(1, value.getByteCount() / 1024);
         }
     };
     private final Map<String, List<Runnable>> pending = new ConcurrentHashMap<>();
-    private final ExecutorService executor = Executors.newFixedThreadPool(2, runnable -> {
+    private final ExecutorService executor = Executors.newSingleThreadExecutor(runnable -> {
         Thread thread = new Thread(runnable, "twitch-emote");
         thread.setDaemon(true);
         return thread;
@@ -53,14 +53,17 @@ public final class EmoteLoader {
     public Bitmap cached(String id) { return id == null ? null : memory.get(id); }
 
     public void load(String id, Runnable callback) {
-        if (id == null || !id.matches("[A-Za-z0-9_-]{1,128}")) return;
-        if (memory.get(id) != null) { main.post(callback); return; }
+        if (id == null || callback == null || !id.matches("[A-Za-z0-9_-]{1,128}")) return;
+        if (memory.get(id) != null) {
+            main.post(callback);
+            return;
+        }
         boolean shouldStart;
         synchronized (pending) {
             List<Runnable> callbacks = pending.get(id);
             shouldStart = callbacks == null;
             if (callbacks == null) callbacks = new ArrayList<>();
-            callbacks.add(callback);
+            if (callbacks.size() < 64) callbacks.add(callback);
             pending.put(id, callbacks);
         }
         if (shouldStart) executor.execute(() -> loadNow(id));
@@ -108,5 +111,10 @@ public final class EmoteLoader {
         java.util.Arrays.sort(files, (a, b) -> Long.compare(b.lastModified(), a.lastModified()));
         for (int index = 128; index < files.length; index++) files[index].delete();
     }
-}
 
+    private static int memoryCacheSizeKb() {
+        long maxMemoryKb = Runtime.getRuntime().maxMemory() / 1024L;
+        long target = maxMemoryKb / 32L;
+        return (int) Math.max(2_048L, Math.min(6_144L, target));
+    }
+}

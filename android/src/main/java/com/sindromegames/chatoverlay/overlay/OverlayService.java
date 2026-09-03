@@ -10,6 +10,7 @@ import android.content.pm.ServiceInfo;
 import android.os.Build;
 import android.os.IBinder;
 import android.provider.Settings;
+import android.util.Log;
 
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
@@ -27,6 +28,7 @@ public final class OverlayService extends Service {
     public static final String ACTION_SHOW = "com.sindromegames.chatoverlay.SHOW";
     public static final String ACTION_HIDE = "com.sindromegames.chatoverlay.HIDE";
     public static final String ACTION_TOGGLE_LOCK = "com.sindromegames.chatoverlay.TOGGLE_LOCK";
+    private static final String TAG = "OverlayService";
     private static final String CHANNEL = "chat_overlay";
     private static final int NOTIFICATION_ID = 7301;
 
@@ -35,54 +37,96 @@ public final class OverlayService extends Service {
 
     @Override public void onCreate() {
         super.onCreate();
-        createNotificationChannel();
-        engine = new ChatEngine(this);
-        overlay = new OverlayWindow(this, this::refreshNotification);
+        try {
+            createNotificationChannel();
+            engine = new ChatEngine(this);
+            overlay = new OverlayWindow(this, this::refreshNotification);
+        } catch (RuntimeException failure) {
+            Log.e(TAG, "Unable to initialize overlay service", failure);
+            stopSelf();
+        }
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
-        String action = intent == null ? ACTION_START : intent.getAction();
-        startInForeground();
-        if (ACTION_STOP.equals(action)) {
-            overlay.hide();
-            engine.stop();
-            stopForeground(STOP_FOREGROUND_REMOVE);
-            stopSelf();
+        if (engine == null || overlay == null) {
+            stopSelf(startId);
             return START_NOT_STICKY;
         }
-        if (ACTION_RESTART.equals(action)) {
-            engine.restart();
-            overlay.refreshSettings();
-        } else if (ACTION_SHOW.equals(action)) {
-            if (!ChatBus.state().running()) engine.start();
-            if (Settings.canDrawOverlays(this)) overlay.show();
-        } else if (ACTION_HIDE.equals(action)) {
-            overlay.hide();
-        } else if (ACTION_TOGGLE_LOCK.equals(action)) {
-            overlay.toggleClickThrough();
-        } else if (!ChatBus.state().running()) {
-            engine.start();
+        if (!startInForeground()) return START_NOT_STICKY;
+
+        String action = intent == null ? ACTION_START : intent.getAction();
+        try {
+            if (ACTION_STOP.equals(action)) {
+                overlay.hide();
+                engine.stop();
+                ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE);
+                stopSelf();
+                return START_NOT_STICKY;
+            }
+            if (ACTION_RESTART.equals(action)) {
+                engine.restart();
+                overlay.refreshSettings();
+            } else if (ACTION_SHOW.equals(action)) {
+                if (!ChatBus.state().running()) engine.start();
+                if (Settings.canDrawOverlays(this)) overlay.show();
+            } else if (ACTION_HIDE.equals(action)) {
+                overlay.hide();
+            } else if (ACTION_TOGGLE_LOCK.equals(action)) {
+                overlay.toggleClickThrough();
+            } else if (!ChatBus.state().running()) {
+                engine.start();
+            }
+            refreshNotification();
+            return START_STICKY;
+        } catch (RuntimeException failure) {
+            Log.e(TAG, "Unhandled overlay service action: " + action, failure);
+            ChatBus.updateRunning(false);
+            refreshNotification();
+            return START_NOT_STICKY;
         }
-        refreshNotification();
-        return START_STICKY;
+    }
+
+    @Override public void onTaskRemoved(Intent rootIntent) {
+        // Keep the user-requested foreground chat alive when the main activity is swiped away.
+        super.onTaskRemoved(rootIntent);
     }
 
     @Override public void onDestroy() {
-        overlay.hide();
-        engine.destroy();
+        if (overlay != null) {
+            try { overlay.hide(); } catch (RuntimeException failure) {
+                Log.w(TAG, "Unable to hide overlay during shutdown", failure);
+            }
+        }
+        if (engine != null) {
+            try { engine.destroy(); } catch (RuntimeException failure) {
+                Log.w(TAG, "Unable to destroy chat engine cleanly", failure);
+            }
+        }
         super.onDestroy();
     }
 
     @Nullable @Override public IBinder onBind(Intent intent) { return null; }
 
-    private void startInForeground() {
-        int type = Build.VERSION.SDK_INT >= 34 ? ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE : 0;
-        ServiceCompat.startForeground(this, NOTIFICATION_ID, notification(), type);
+    private boolean startInForeground() {
+        try {
+            int type = Build.VERSION.SDK_INT >= 34
+                    ? ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE : 0;
+            ServiceCompat.startForeground(this, NOTIFICATION_ID, notification(), type);
+            return true;
+        } catch (RuntimeException failure) {
+            Log.e(TAG, "Android rejected foreground-service startup", failure);
+            stopSelf();
+            return false;
+        }
     }
 
     private void refreshNotification() {
-        NotificationManager manager = getSystemService(NotificationManager.class);
-        if (manager != null) manager.notify(NOTIFICATION_ID, notification());
+        try {
+            NotificationManager manager = getSystemService(NotificationManager.class);
+            if (manager != null) manager.notify(NOTIFICATION_ID, notification());
+        } catch (RuntimeException failure) {
+            Log.w(TAG, "Unable to refresh foreground notification", failure);
+        }
     }
 
     private Notification notification() {
@@ -101,8 +145,10 @@ public final class OverlayService extends Service {
                 .setCategory(NotificationCompat.CATEGORY_SERVICE)
                 .setPriority(NotificationCompat.PRIORITY_LOW);
         if (state.overlayVisible()) {
-            if (state.clickThrough()) builder.addAction(0, getString(R.string.action_unlock),
-                    serviceIntent(ACTION_TOGGLE_LOCK, 4));
+            if (state.clickThrough()) {
+                builder.addAction(0, getString(R.string.action_unlock),
+                        serviceIntent(ACTION_TOGGLE_LOCK, 4));
+            }
             builder.addAction(0, getString(R.string.action_hide), serviceIntent(ACTION_HIDE, 2));
         } else {
             builder.addAction(0, getString(R.string.action_show), serviceIntent(ACTION_SHOW, 3));

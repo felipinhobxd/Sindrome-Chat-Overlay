@@ -6,6 +6,7 @@ import android.os.Looper;
 import com.sindromegames.chatoverlay.model.ChatMessage;
 import com.sindromegames.chatoverlay.providers.YouTubeMode;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -23,7 +24,7 @@ public final class ChatBus {
                         String twitchStatus, String youtubeStatus, YouTubeMode youtubeMode) {}
 
     private static final Object LOCK = new Object();
-    private static final ArrayList<ChatMessage> HISTORY = new ArrayList<>();
+    private static final ArrayDeque<ChatMessage> HISTORY = new ArrayDeque<>();
     private static final CopyOnWriteArrayList<Listener> LISTENERS = new CopyOnWriteArrayList<>();
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
     private static volatile State state = new State(false, false, false,
@@ -36,7 +37,9 @@ public final class ChatBus {
         if (listener == null || LISTENERS.contains(listener)) return;
         LISTENERS.add(listener);
         List<ChatMessage> snapshot = snapshot();
-        MAIN.post(() -> listener.onInitial(snapshot, state));
+        MAIN.post(() -> {
+            if (LISTENERS.contains(listener)) listener.onInitial(snapshot, state);
+        });
     }
 
     public static void unregister(Listener listener) { LISTENERS.remove(listener); }
@@ -47,9 +50,10 @@ public final class ChatBus {
     }
 
     public static void publish(ChatMessage message) {
+        if (message == null) return;
         synchronized (LOCK) {
-            HISTORY.add(message);
-            while (HISTORY.size() > maximumMessages) HISTORY.remove(0);
+            HISTORY.addLast(message);
+            trimLocked();
         }
         MAIN.post(() -> {
             for (Listener listener : LISTENERS) listener.onMessage(message);
@@ -115,10 +119,12 @@ public final class ChatBus {
     }
 
     private static void trimAndPublish() {
-        synchronized (LOCK) {
-            while (HISTORY.size() > maximumMessages) HISTORY.remove(0);
-        }
+        synchronized (LOCK) { trimLocked(); }
         publishHistory();
+    }
+
+    private static void trimLocked() {
+        while (HISTORY.size() > maximumMessages) HISTORY.removeFirst();
     }
 
     private static void publishHistory() {
@@ -128,4 +134,3 @@ public final class ChatBus {
         });
     }
 }
-

@@ -89,9 +89,18 @@ public final class ChatMessageView extends LinearLayout {
         renderBody(message);
     }
 
+    public void unbind() {
+        bound = null;
+        settings = null;
+        metadata.removeAllViews();
+        body.setText(null);
+    }
+
     private void renderBody(ChatMessage message) {
+        AppSettings current = settings;
+        if (current == null || bound != message) return;
         SpannableString output = new SpannableString(message.text);
-        int imageSize = Math.max(dp(22), Math.round(settings.fontSize * getResources()
+        int imageSize = Math.max(dp(22), Math.round(current.fontSize * getResources()
                 .getDisplayMetrics().scaledDensity * 1.35f));
         for (ChatEmote emote : message.emotes) {
             if (emote.start < 0 || emote.end > output.length() || emote.start >= emote.end) continue;
@@ -112,7 +121,7 @@ public final class ChatMessageView extends LinearLayout {
                 });
             }
         }
-        body.setText(output);
+        if (bound == message) body.setText(output);
     }
 
     private TextView meta(String value) {
