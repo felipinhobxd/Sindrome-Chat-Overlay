@@ -9,7 +9,7 @@ on:
     types: [completed]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build-android:
@@ -18,30 +18,40 @@ jobs:
       (github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      release_tag: ${{ steps.version.outputs.release_tag }}
+      publish: ${{ steps.release_target.outputs.publish }}
+      signing_configured: ${{ steps.signing.outputs.configured }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
 
       - name: Set up Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
         with:
           distribution: temurin
           java-version: "17"
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
 
       - name: Install Android SDK packages
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
         with:
           gradle-version: "8.10.2"
+          cache-provider: basic
 
       - name: Read application version
+        id: version
         shell: bash
         run: |
           version=$(sed -n 's/^[[:space:]]*versionName "\([^"]*\)"/\1/p' android/build.gradle | head -n 1)
@@ -51,6 +61,8 @@ jobs:
           fi
           echo "VERSION=$version" >> "$GITHUB_ENV"
           echo "RELEASE_TAG=v$version" >> "$GITHUB_ENV"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "release_tag=v$version" >> "$GITHUB_OUTPUT"
 
       - name: Run Android tests and lint
         run: gradle :android:testDebugUnitTest :android:lintDebug --stacktrace
@@ -59,7 +71,7 @@ jobs:
         run: gradle :android:assembleDebug --stacktrace
 
       - name: Upload tested debug APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: SindromeChatOverlay-Android-debug-v${{ env.VERSION }}
           path: android/build/outputs/apk/debug/android-debug.apk
@@ -131,26 +143,38 @@ jobs:
 
       - name: Upload signed Android artifact
         if: steps.signing.outputs.configured == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: SindromeChatOverlay-Android-v${{ env.VERSION }}
           path: |
             SindromeChatOverlay-Android-v${{ env.VERSION }}.apk
             SHA256SUMS-Android.txt
 
-      - name: Attach signed APK to GitHub Release
-        if: >-
-          steps.signing.outputs.configured == 'true' &&
-          steps.release_target.outputs.publish == 'true' &&
-          github.event_name != 'pull_request'
-        uses: softprops/action-gh-release@v2
+  publish-android:
+    needs: build-android
+    if: >-
+      github.event_name != 'pull_request' &&
+      needs.build-android.result == 'success' &&
+      needs.build-android.outputs.publish == 'true' &&
+      needs.build-android.outputs.signing_configured == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download signed Android artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          tag_name: ${{ env.RELEASE_TAG }}
-          name: Sindrome Chat Overlay ${{ env.RELEASE_TAG }}
+          name: SindromeChatOverlay-Android-v${{ needs.build-android.outputs.version }}
+          path: release-android
+
+      - name: Attach signed APK to GitHub Release
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          tag_name: ${{ needs.build-android.outputs.release_tag }}
+          name: Sindrome Chat Overlay ${{ needs.build-android.outputs.release_tag }}
           target_commitish: ${{ github.event.workflow_run.head_sha || github.sha }}
           make_latest: true
           fail_on_unmatched_files: true
           files: |
-            SindromeChatOverlay-Android-v${{ env.VERSION }}.apk
-            SHA256SUMS-Android.txt
-
+            release-android/SindromeChatOverlay-Android-v${{ needs.build-android.outputs.version }}.apk
+            release-android/SHA256SUMS-Android.txt
