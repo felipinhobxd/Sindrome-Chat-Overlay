@@ -17,8 +17,8 @@ android {
         applicationId "com.sindromegames.chatoverlay"
         minSdk 26
         targetSdk 35
-        versionCode 182
-        versionName "1.8.2"
+        versionCode 183
+        versionName "1.8.3"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -105,4 +105,5 @@ dependencies {
 
     testImplementation "junit:junit:4.13.2"
     testImplementation "org.json:json:20240303"
+    testImplementation "org.robolectric:robolectric:4.14.1"
 }
