@@ -58,4 +58,4 @@ Name: "{group}\Uninstall Sindrome Chat Overlay"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\Sindrome Chat Overlay"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#AppExeName}"; Description: "{cm:LaunchProgram,Sindrome Chat Overlay}"; Flags: nowait postinstall skipifsilent
+Filename: "{cmd}"; Parameters: "/D /S /C ""set ""PYINSTALLER_RESET_ENVIRONMENT=1"" & set ""_PYI_ARCHIVE_FILE="" & set ""_PYI_APPLICATION_HOME_DIR="" & set ""_PYI_PARENT_PROCESS_LEVEL="" & set ""_PYI_SPLASH_IPC="" & start """" /D ""{app}"" ""{app}\{#AppExeName}"""""; Description: "{cm:LaunchProgram,Sindrome Chat Overlay}"; Flags: nowait postinstall skipifsilent runhidden
