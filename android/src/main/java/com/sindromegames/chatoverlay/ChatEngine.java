@@ -119,11 +119,14 @@ public final class ChatEngine {
         }
 
         @Override public void onMessage(ChatMessage message) {
-            if (!active() || message == null) return;
-            AppSettings current = settings;
-            if (current.hideCommands && message.text.startsWith("!")) return;
-            if (!active()) return;
-            ChatBus.publish(message);
+            if (message == null) return;
+            AppSettings current;
+            synchronized (lock) {
+                if (!active()) return;
+                current = settings;
+                if (current.hideCommands && message.text.startsWith("!")) return;
+                ChatBus.publish(message);
+            }
             if (current.soundEnabled && active()) {
                 String preset = message.platform.equals("twitch")
                         ? current.twitchSound : current.youtubeSound;
@@ -132,15 +135,21 @@ public final class ChatEngine {
         }
 
         @Override public void onDelete(String platform, String messageId) {
-            if (active()) ChatBus.delete(platform, messageId);
+            synchronized (lock) {
+                if (active()) ChatBus.delete(platform, messageId);
+            }
         }
 
         @Override public void onClear(String platform) {
-            if (active()) ChatBus.clearPlatform(platform);
+            synchronized (lock) {
+                if (active()) ChatBus.clearPlatform(platform);
+            }
         }
 
         @Override public void onStatus(String platform, String status, YouTubeMode youtubeMode) {
-            if (active()) ChatBus.updateStatus(platform, status, youtubeMode);
+            synchronized (lock) {
+                if (active()) ChatBus.updateStatus(platform, status, youtubeMode);
+            }
         }
     }
 }
