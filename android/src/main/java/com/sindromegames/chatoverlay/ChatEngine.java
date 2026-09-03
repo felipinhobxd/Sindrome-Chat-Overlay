@@ -82,8 +82,10 @@ public final class ChatEngine {
     public void restart() { start(); }
 
     public void stop() {
-        generation.incrementAndGet();
-        synchronized (lock) { stopLocked(); }
+        synchronized (lock) {
+            generation.incrementAndGet();
+            stopLocked();
+        }
         ChatBus.updateStopped();
     }
 
@@ -120,17 +122,16 @@ public final class ChatEngine {
 
         @Override public void onMessage(ChatMessage message) {
             if (message == null) return;
-            AppSettings current;
             synchronized (lock) {
                 if (!active()) return;
-                current = settings;
+                AppSettings current = settings;
                 if (current.hideCommands && message.text.startsWith("!")) return;
                 ChatBus.publish(message);
-            }
-            if (current.soundEnabled && active()) {
-                String preset = message.platform.equals("twitch")
-                        ? current.twitchSound : current.youtubeSound;
-                sounds.play(preset, current.soundVolume, current.soundMinIntervalMs, false);
+                if (current.soundEnabled) {
+                    String preset = message.platform.equals("twitch")
+                            ? current.twitchSound : current.youtubeSound;
+                    sounds.play(preset, current.soundVolume, current.soundMinIntervalMs, false);
+                }
             }
         }
 
