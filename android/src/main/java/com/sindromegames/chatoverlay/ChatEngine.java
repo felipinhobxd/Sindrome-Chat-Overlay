@@ -85,8 +85,8 @@ public final class ChatEngine {
         synchronized (lock) {
             generation.incrementAndGet();
             stopLocked();
+            ChatBus.updateStopped();
         }
-        ChatBus.updateStopped();
     }
 
     public void destroy() {
