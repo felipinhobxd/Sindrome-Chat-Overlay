@@ -1,6 +1,7 @@
 package com.sindromegames.chatoverlay;
 
 import android.Manifest;
+import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
@@ -22,7 +23,6 @@ import androidx.core.content.ContextCompat;
 
 import com.sindromegames.chatoverlay.model.ChatMessage;
 import com.sindromegames.chatoverlay.overlay.OverlayService;
-import com.sindromegames.chatoverlay.providers.YouTubeMode;
 import com.sindromegames.chatoverlay.settings.AppSettings;
 import com.sindromegames.chatoverlay.ui.ChatListView;
 
@@ -35,12 +35,7 @@ public final class MainActivity extends AppCompatActivity implements ChatBus.Lis
     private boolean pendingOverlay;
 
     private final ActivityResultLauncher<Intent> overlayPermission = registerForActivityResult(
-            new ActivityResultContracts.StartActivityForResult(), result -> {
-                if (Settings.canDrawOverlays(this) && pendingOverlay) send(OverlayService.ACTION_SHOW);
-                else if (pendingOverlay) Toast.makeText(this, R.string.overlay_permission_missing,
-                        Toast.LENGTH_LONG).show();
-                pendingOverlay = false;
-            });
+            new ActivityResultContracts.StartActivityForResult(), result -> handleOverlayPermissionReturn());
     private final ActivityResultLauncher<Intent> settingsLauncher = registerForActivityResult(
             new ActivityResultContracts.StartActivityForResult(), result -> {
                 if (ChatBus.state().running()) send(OverlayService.ACTION_RESTART);
@@ -53,11 +48,28 @@ public final class MainActivity extends AppCompatActivity implements ChatBus.Lis
         super.onCreate(savedInstanceState);
         buildUi();
         requestNotificationsIfNeeded();
-        if (!ChatBus.state().running()) send(OverlayService.ACTION_START);
+        getWindow().getDecorView().post(() -> {
+            if (!isFinishing() && !ChatBus.state().running()) send(OverlayService.ACTION_START);
+        });
     }
 
-    @Override protected void onStart() { super.onStart(); ChatBus.register(this); }
-    @Override protected void onStop() { ChatBus.unregister(this); super.onStop(); }
+    @Override protected void onStart() {
+        super.onStart();
+        ChatBus.register(this);
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        if (pendingOverlay && Settings.canDrawOverlays(this)) {
+            pendingOverlay = false;
+            send(OverlayService.ACTION_SHOW);
+        }
+    }
+
+    @Override protected void onStop() {
+        ChatBus.unregister(this);
+        super.onStop();
+    }
 
     private void buildUi() {
         LinearLayout root = new LinearLayout(this);
@@ -70,25 +82,30 @@ public final class MainActivity extends AppCompatActivity implements ChatBus.Lis
         LinearLayout titles = new LinearLayout(this);
         titles.setOrientation(LinearLayout.VERTICAL);
         TextView title = new TextView(this);
-        title.setText(R.string.app_name); title.setTextColor(Color.WHITE); title.setTextSize(20);
+        title.setText(R.string.app_name);
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(20);
         title.setTypeface(null, android.graphics.Typeface.BOLD);
         TextView subtitle = new TextView(this);
-        subtitle.setText(R.string.mobile_subtitle); subtitle.setTextColor(
-                ContextCompat.getColor(this, R.color.text_secondary)); subtitle.setTextSize(12);
-        titles.addView(title); titles.addView(subtitle);
+        subtitle.setText(R.string.mobile_subtitle);
+        subtitle.setTextColor(ContextCompat.getColor(this, R.color.text_secondary));
+        subtitle.setTextSize(12);
+        titles.addView(title);
+        titles.addView(subtitle);
         header.addView(titles, new LinearLayout.LayoutParams(0,
                 LinearLayout.LayoutParams.WRAP_CONTENT, 1));
-        Button settings = new Button(this);
-        settings.setText("⚙");
-        settings.setContentDescription(getString(R.string.open_settings));
-        settings.setOnClickListener(view -> settingsLauncher.launch(
+        Button settingsButton = new Button(this);
+        settingsButton.setText("⚙");
+        settingsButton.setContentDescription(getString(R.string.open_settings));
+        settingsButton.setOnClickListener(view -> settingsLauncher.launch(
                 new Intent(this, SettingsActivity.class)));
-        header.addView(settings, new LinearLayout.LayoutParams(dp(54), dp(48)));
+        header.addView(settingsButton, new LinearLayout.LayoutParams(dp(54), dp(48)));
         root.addView(header);
 
         status = new TextView(this);
         status.setTextColor(ContextCompat.getColor(this, R.color.text_secondary));
-        status.setTextSize(12); status.setPadding(dp(2), dp(7), dp(2), dp(7));
+        status.setTextSize(12);
+        status.setPadding(dp(2), dp(7), dp(2), dp(7));
         root.addView(status);
 
         LinearLayout actions = new LinearLayout(this);
@@ -101,7 +118,8 @@ public final class MainActivity extends AppCompatActivity implements ChatBus.Lis
         overlayButton.setOnClickListener(view -> toggleOverlay());
         actions.addView(overlayButton, new LinearLayout.LayoutParams(0, dp(52), 1));
         Button clear = new Button(this);
-        clear.setText("⌫"); clear.setContentDescription(getString(R.string.action_stop));
+        clear.setText("⌫");
+        clear.setContentDescription(getString(R.string.action_stop));
         clear.setOnClickListener(view -> ChatBus.clearAll());
         actions.addView(clear, new LinearLayout.LayoutParams(dp(58), dp(52)));
         root.addView(actions);
@@ -114,35 +132,90 @@ public final class MainActivity extends AppCompatActivity implements ChatBus.Lis
     }
 
     private void toggleOverlay() {
-        if (ChatBus.state().overlayVisible()) { send(OverlayService.ACTION_HIDE); return; }
+        if (ChatBus.state().overlayVisible()) {
+            send(OverlayService.ACTION_HIDE);
+            return;
+        }
         if (!Settings.canDrawOverlays(this)) {
             pendingOverlay = true;
-            new AlertDialog.Builder(this).setTitle(R.string.permission_overlay_title)
+            new AlertDialog.Builder(this)
+                    .setTitle(R.string.permission_overlay_title)
                     .setMessage(R.string.permission_overlay_message)
-                    .setNegativeButton(R.string.cancel, null)
-                    .setPositiveButton(android.R.string.ok, (dialog, which) -> {
-                        Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                                Uri.parse("package:" + getPackageName()));
-                        overlayPermission.launch(intent);
-                    }).show();
+                    .setNegativeButton(R.string.cancel, (dialog, which) -> pendingOverlay = false)
+                    .setPositiveButton(android.R.string.ok, (dialog, which) ->
+                            launchOverlayPermissionSettings())
+                    .show();
             return;
         }
         send(OverlayService.ACTION_SHOW);
     }
 
+    private void launchOverlayPermissionSettings() {
+        Intent packagePermission = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:" + getPackageName()));
+        try {
+            overlayPermission.launch(packagePermission);
+            return;
+        } catch (ActivityNotFoundException | SecurityException ignored) {}
+
+        try {
+            overlayPermission.launch(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION));
+            return;
+        } catch (ActivityNotFoundException | SecurityException ignored) {}
+
+        openApplicationDetails();
+    }
+
+    private void handleOverlayPermissionReturn() {
+        if (!pendingOverlay) return;
+        if (Settings.canDrawOverlays(this)) {
+            pendingOverlay = false;
+            send(OverlayService.ACTION_SHOW);
+            return;
+        }
+        pendingOverlay = false;
+        showOverlayPermissionHelp();
+    }
+
+    private void showOverlayPermissionHelp() {
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.permission_overlay_title)
+                .setMessage(R.string.overlay_permission_restricted_help)
+                .setNegativeButton(R.string.cancel, null)
+                .setPositiveButton(R.string.open_app_settings, (dialog, which) -> openApplicationDetails())
+                .show();
+    }
+
+    private void openApplicationDetails() {
+        Intent details = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.parse("package:" + getPackageName()));
+        try {
+            startActivity(details);
+        } catch (ActivityNotFoundException | SecurityException ignored) {
+            Toast.makeText(this, R.string.overlay_permission_missing, Toast.LENGTH_LONG).show();
+        }
+    }
+
     private void send(String action) {
         Intent intent = new Intent(this, OverlayService.class).setAction(action);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
-                && !OverlayService.ACTION_STOP.equals(action)
-                && !OverlayService.ACTION_HIDE.equals(action)) {
-            ContextCompat.startForegroundService(this, intent);
-        } else startService(intent);
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                    && !OverlayService.ACTION_STOP.equals(action)
+                    && !OverlayService.ACTION_HIDE.equals(action)) {
+                ContextCompat.startForegroundService(this, intent);
+            } else {
+                startService(intent);
+            }
+        } catch (RuntimeException failure) {
+            Toast.makeText(this, R.string.unknown_error, Toast.LENGTH_LONG).show();
+        }
     }
 
     private void requestNotificationsIfNeeded() {
         if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(this,
-                Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
+                Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             notificationsPermission.launch(Manifest.permission.POST_NOTIFICATIONS);
+        }
     }
 
     private void renderState(ChatBus.State state) {
@@ -171,7 +244,10 @@ public final class MainActivity extends AppCompatActivity implements ChatBus.Lis
         return getString(resource);
     }
 
-    @Override public void onInitial(List<ChatMessage> messages, ChatBus.State state) { renderState(state); }
+    @Override public void onInitial(List<ChatMessage> messages, ChatBus.State state) {
+        renderState(state);
+    }
+
     @Override public void onMessage(ChatMessage message) {}
     @Override public void onHistoryChanged(List<ChatMessage> messages) {}
     @Override public void onState(ChatBus.State state) { renderState(state); }
@@ -180,4 +256,3 @@ public final class MainActivity extends AppCompatActivity implements ChatBus.Lis
         return Math.round(value * getResources().getDisplayMetrics().density);
     }
 }
-
