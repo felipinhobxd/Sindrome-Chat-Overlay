@@ -11,6 +11,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 public final class ChatBus {
@@ -32,6 +33,8 @@ public final class ChatBus {
     public record State(boolean running, boolean overlayVisible, boolean clickThrough,
                         String twitchStatus, String youtubeStatus, YouTubeMode youtubeMode) {}
 
+    private record PendingDelivery(long sequence, ChatMessage message) {}
+
     private interface StateMutation {
         State apply(State current);
     }
@@ -39,13 +42,16 @@ public final class ChatBus {
     private static final Object LOCK = new Object();
     private static final Object STATE_LOCK = new Object();
     private static final ArrayDeque<ChatMessage> HISTORY = new ArrayDeque<>();
-    private static final ArrayDeque<ChatMessage> PENDING_MESSAGES = new ArrayDeque<>();
+    private static final ArrayDeque<PendingDelivery> PENDING_MESSAGES = new ArrayDeque<>();
     private static final CopyOnWriteArrayList<Listener> LISTENERS = new CopyOnWriteArrayList<>();
+    private static final ConcurrentHashMap<Listener, Long> LISTENER_START_SEQUENCE =
+            new ConcurrentHashMap<>();
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
 
     private static volatile State state = new State(false, false, false,
             "stopped", "stopped", YouTubeMode.STOPPED);
     private static volatile int maximumMessages = 150;
+    private static long messageSequence;
     private static boolean deliveryScheduled;
     private static boolean historyResyncPending;
     private static boolean stateDispatchScheduled;
@@ -53,11 +59,21 @@ public final class ChatBus {
     private ChatBus() {}
 
     public static void register(Listener listener) {
-        if (listener == null || !LISTENERS.addIfAbsent(listener)) return;
-        List<ChatMessage> snapshot = snapshot();
-        State initialState = state();
+        if (listener == null) return;
+
+        List<ChatMessage> snapshot;
+        State initialState;
+        synchronized (LOCK) {
+            if (LISTENER_START_SEQUENCE.containsKey(listener)) return;
+            long startSequence = messageSequence;
+            snapshot = immutableHistorySnapshotLocked();
+            initialState = state();
+            LISTENER_START_SEQUENCE.put(listener, startSequence);
+            LISTENERS.add(listener);
+        }
+
         Runnable initial = () -> {
-            if (!LISTENERS.contains(listener)) return;
+            if (!LISTENER_START_SEQUENCE.containsKey(listener)) return;
             try {
                 listener.onInitial(snapshot, initialState);
             } catch (RuntimeException failure) {
@@ -68,7 +84,13 @@ public final class ChatBus {
         else MAIN.post(initial);
     }
 
-    public static void unregister(Listener listener) { LISTENERS.remove(listener); }
+    public static void unregister(Listener listener) {
+        if (listener == null) return;
+        synchronized (LOCK) {
+            LISTENER_START_SEQUENCE.remove(listener);
+            LISTENERS.remove(listener);
+        }
+    }
 
     public static void setMaximumMessages(int maximum) {
         boolean shouldSchedule;
@@ -84,6 +106,7 @@ public final class ChatBus {
         if (message == null) return;
         boolean shouldSchedule = false;
         synchronized (LOCK) {
+            long sequence = ++messageSequence;
             HISTORY.addLast(message);
             trimLocked();
 
@@ -93,7 +116,7 @@ public final class ChatBus {
                     PENDING_MESSAGES.clear();
                     historyResyncPending = true;
                 } else {
-                    PENDING_MESSAGES.addLast(message);
+                    PENDING_MESSAGES.addLast(new PendingDelivery(sequence, message));
                 }
             }
 
@@ -213,7 +236,7 @@ public final class ChatBus {
     }
 
     private static void drainMessages() {
-        List<ChatMessage> batch = null;
+        List<PendingDelivery> batch = null;
         List<ChatMessage> history = null;
         boolean scheduleNext = false;
 
@@ -225,10 +248,10 @@ public final class ChatBus {
                 deliveryScheduled = false;
             } else if (!PENDING_MESSAGES.isEmpty()) {
                 int count = Math.min(MAX_BATCH_SIZE, PENDING_MESSAGES.size());
-                ArrayList<ChatMessage> next = new ArrayList<>(count);
+                ArrayList<PendingDelivery> next = new ArrayList<>(count);
                 for (int index = 0; index < count; index++) {
-                    ChatMessage message = PENDING_MESSAGES.pollFirst();
-                    if (message != null) next.add(message);
+                    PendingDelivery delivery = PENDING_MESSAGES.pollFirst();
+                    if (delivery != null) next.add(delivery);
                 }
                 batch = Collections.unmodifiableList(next);
                 if (PENDING_MESSAGES.isEmpty()) {
@@ -250,16 +273,27 @@ public final class ChatBus {
                 }
             }
         } else if (batch != null && !batch.isEmpty()) {
-            for (Listener listener : LISTENERS) {
-                try {
-                    listener.onMessages(batch);
-                } catch (RuntimeException failure) {
-                    Log.e(TAG, "Chat listener failed during batched delivery", failure);
-                }
-            }
+            for (Listener listener : LISTENERS) deliverBatch(listener, batch);
         }
 
         if (scheduleNext) MAIN.postDelayed(ChatBus::drainMessages, NEXT_BATCH_DELAY_MS);
+    }
+
+    private static void deliverBatch(Listener listener, List<PendingDelivery> batch) {
+        Long startSequence = LISTENER_START_SEQUENCE.get(listener);
+        if (startSequence == null) return;
+
+        ArrayList<ChatMessage> messages = new ArrayList<>(batch.size());
+        for (PendingDelivery delivery : batch) {
+            if (delivery.sequence > startSequence) messages.add(delivery.message);
+        }
+        if (messages.isEmpty()) return;
+
+        try {
+            listener.onMessages(Collections.unmodifiableList(messages));
+        } catch (RuntimeException failure) {
+            Log.e(TAG, "Chat listener failed during batched delivery", failure);
+        }
     }
 
     private static List<ChatMessage> immutableHistorySnapshotLocked() {
