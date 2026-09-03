@@ -24,10 +24,6 @@ public final class NotificationSoundPlayer {
     private static final int SAMPLE_RATE = 44_100;
     private static final int CHANNELS = 1;
     private static final int BITS_PER_SAMPLE = 16;
-    private static final AudioAttributes AUDIO_ATTRIBUTES = new AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_MEDIA)
-            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-            .build();
     private static final Map<String, double[][]> PRESETS;
 
     static {
@@ -88,7 +84,7 @@ public final class NotificationSoundPlayer {
         MediaPlayer player = null;
         try {
             player = new MediaPlayer();
-            player.setAudioAttributes(AUDIO_ATTRIBUTES);
+            player.setAudioAttributes(mediaAudioAttributes());
             player.setDataSource(new ByteArrayMediaDataSource(wav));
             float gain = Math.max(0f, Math.min(1f, volume / 200f));
             player.setVolume(gain, gain);
@@ -115,6 +111,13 @@ public final class NotificationSoundPlayer {
             }
             releasePlayer(player, false);
         }
+    }
+
+    private static AudioAttributes mediaAudioAttributes() {
+        return new AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_MEDIA)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build();
     }
 
     private static void playFallbackTone(int volume, long durationMs) {
@@ -206,7 +209,8 @@ public final class NotificationSoundPlayer {
         }
 
         @Override public int readAt(long position, byte[] buffer, int offset, int size) {
-            if (position < 0 || position >= data.length || size <= 0) return -1;
+            if (size == 0) return 0;
+            if (position < 0 || position >= data.length || size < 0) return -1;
             int start = (int) position;
             int count = Math.min(size, data.length - start);
             System.arraycopy(data, start, buffer, offset, count);
