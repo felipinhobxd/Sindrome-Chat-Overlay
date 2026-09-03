@@ -5,7 +5,7 @@ import sys
 import traceback
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtGui import QGuiApplication, QImageReader, QPixmapCache
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from .i18n import tr
@@ -14,10 +14,17 @@ from .settings import SettingsStore
 from .ui import OverlayWindow
 
 
+_PIXMAP_CACHE_KB = 4 * 1024
+_IMAGE_ALLOCATION_LIMIT_MB = 32
+
+
 def run() -> int:
     QGuiApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
     )
+    QPixmapCache.setCacheLimit(_PIXMAP_CACHE_KB)
+    QImageReader.setAllocationLimit(_IMAGE_ALLOCATION_LIMIT_MB)
+
     app = QApplication(sys.argv)
     app.setApplicationName("Sindrome Chat Overlay")
     app.setApplicationDisplayName("Sindrome Chat Overlay")

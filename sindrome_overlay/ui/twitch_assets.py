@@ -22,10 +22,10 @@ from ..settings import app_data_dir
 _SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 _GLOBAL_BADGES_URL = "https://badges.twitch.tv/v1/badges/global/display"
 _CHANNEL_BADGES_URL = "https://badges.twitch.tv/v1/badges/channels/{room_id}/display"
-_MAX_ACTIVE_DOWNLOADS = 12
-_MAX_QUEUED_DOWNLOADS = 256
-_MAX_MEMORY_IMAGES = 128
-_MAX_RETRY_ENTRIES = 512
+_MAX_ACTIVE_DOWNLOADS = 6
+_MAX_QUEUED_DOWNLOADS = 128
+_MAX_MEMORY_IMAGES = 48
+_MAX_RETRY_ENTRIES = 256
 
 
 class TwitchAssetCache(QObject):

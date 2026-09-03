@@ -8,7 +8,7 @@ from ..events import ProviderEvent
 from ..models import ChatMessage
 
 
-_MAX_PENDING_EVENTS = 1_500
+_MAX_PENDING_EVENTS = 500
 
 
 class BaseProvider(threading.Thread):
