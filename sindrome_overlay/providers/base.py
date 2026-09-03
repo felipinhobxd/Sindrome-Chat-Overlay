@@ -8,6 +8,9 @@ from ..events import ProviderEvent
 from ..models import ChatMessage
 
 
+_MAX_PENDING_EVENTS = 1_500
+
+
 class BaseProvider(threading.Thread):
     platform = "unknown"
 
@@ -24,10 +27,10 @@ class BaseProvider(threading.Thread):
         return self.stop_event.wait(seconds)
 
     def emit_message(self, message: ChatMessage) -> None:
-        self.events.put(ProviderEvent(kind="message", platform=self.platform, message=message))
+        self._emit(ProviderEvent(kind="message", platform=self.platform, message=message))
 
     def emit_status(self, state: str, text: str, *, mode: str = "") -> None:
-        self.events.put(
+        self._emit(
             ProviderEvent(
                 kind="status",
                 platform=self.platform,
@@ -38,7 +41,7 @@ class BaseProvider(threading.Thread):
         )
 
     def emit_delete(self, message_id: str) -> None:
-        self.events.put(
+        self._emit(
             ProviderEvent(
                 kind="delete",
                 platform=self.platform,
@@ -47,4 +50,20 @@ class BaseProvider(threading.Thread):
         )
 
     def emit_clear(self) -> None:
-        self.events.put(ProviderEvent(kind="clear", platform=self.platform))
+        self._emit(ProviderEvent(kind="clear", platform=self.platform))
+
+    def _emit(self, event: ProviderEvent) -> None:
+        """Keep provider backlogs bounded if the UI cannot drain events fast enough."""
+        try:
+            while self.events.qsize() >= _MAX_PENDING_EVENTS:
+                self.events.get_nowait()
+            self.events.put_nowait(event)
+        except queue.Empty:
+            self.events.put_nowait(event)
+        except queue.Full:
+            # Also works if callers later replace the current unbounded queue with a bounded one.
+            try:
+                self.events.get_nowait()
+                self.events.put_nowait(event)
+            except (queue.Empty, queue.Full):
+                self.log.warning("Dropping %s event because the UI event queue is full", event.kind)
