@@ -25,6 +25,7 @@ public final class ChatListView extends RecyclerView implements ChatBus.Listener
     private static final int TYPE_MESSAGE = 1;
 
     private final MessageAdapter messageAdapter;
+    private final Runnable scrollToEnd;
     private AppSettings settings;
     private boolean registered;
     private boolean scrollScheduled;
@@ -44,6 +45,12 @@ public final class ChatListView extends RecyclerView implements ChatBus.Listener
         settings = AppSettings.load(context);
         messageAdapter = new MessageAdapter();
         setAdapter(messageAdapter);
+        scrollToEnd = () -> {
+            scrollScheduled = false;
+            if (!isAttachedToWindow() || !settings.autoScroll) return;
+            int count = messageAdapter.getItemCount();
+            if (count > 0) scrollToPosition(count - 1);
+        };
     }
 
     @Override protected void onAttachedToWindow() {
@@ -59,6 +66,7 @@ public final class ChatListView extends RecyclerView implements ChatBus.Listener
             registered = false;
             ChatBus.unregister(this);
         }
+        removeCallbacks(scrollToEnd);
         scrollScheduled = false;
         super.onDetachedFromWindow();
     }
@@ -94,12 +102,7 @@ public final class ChatListView extends RecyclerView implements ChatBus.Listener
     private void scrollIfNeeded() {
         if (!settings.autoScroll || scrollScheduled) return;
         scrollScheduled = true;
-        postOnAnimation(() -> {
-            scrollScheduled = false;
-            if (!isAttachedToWindow()) return;
-            int count = messageAdapter.getItemCount();
-            if (count > 0) scrollToPosition(count - 1);
-        });
+        postOnAnimation(scrollToEnd);
     }
 
     private final class MessageAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
