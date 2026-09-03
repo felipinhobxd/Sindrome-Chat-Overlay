@@ -113,20 +113,6 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "release_tag=v$version" >> "$GITHUB_OUTPUT"
 
-      - name: Require merged pull request provenance
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          count=$(gh api \
-            -H "Accept: application/vnd.github+json" \
-            "/repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" \
-            --jq '[.[] | select(.merged_at != null and .base.ref == "main")] | length')
-          if [ "$count" -lt 1 ]; then
-            echo "Refusing to publish: $GITHUB_SHA is not the result of a merged pull request into main." >&2
-            exit 1
-          fi
-
       - name: Publish only a new version tag
         id: release
         shell: bash
@@ -137,9 +123,33 @@ jobs:
             echo "Release $RELEASE_TAG already exists; this main merge is not a new release."
             echo "should_release=false" >> "$GITHUB_OUTPUT"
           else
-            echo "Release $RELEASE_TAG is new and may be published."
+            echo "Release $RELEASE_TAG is new and may be published after provenance verification."
             echo "should_release=true" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Require merged pull request provenance
+        if: steps.release.outputs.should_release == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          count=0
+          for attempt in 1 2 3 4 5 6; do
+            count=$(gh api \
+              -H "Accept: application/vnd.github+json" \
+              "/repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" \
+              --jq '[.[] | select(.merged_at != null and .base.ref == "main")] | length')
+            if [ "$count" -ge 1 ]; then
+              echo "Verified merged pull request provenance on attempt $attempt."
+              exit 0
+            fi
+            if [ "$attempt" -lt 6 ]; then
+              echo "Pull request association is not indexed yet; retrying in 5 seconds ($attempt/6)..."
+              sleep 5
+            fi
+          done
+          echo "Refusing to publish: $GITHUB_SHA is not associated with a merged pull request into main after retries." >&2
+          exit 1
 
   build:
     needs: release-gate
