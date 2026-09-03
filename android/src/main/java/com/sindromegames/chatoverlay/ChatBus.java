@@ -53,8 +53,7 @@ public final class ChatBus {
     private ChatBus() {}
 
     public static void register(Listener listener) {
-        if (listener == null || LISTENERS.contains(listener)) return;
-        LISTENERS.add(listener);
+        if (listener == null || !LISTENERS.addIfAbsent(listener)) return;
         List<ChatMessage> snapshot = snapshot();
         State initialState = state();
         Runnable initial = () -> {
