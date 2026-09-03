@@ -3,9 +3,12 @@ package com.sindromegames.chatoverlay.overlay;
 import android.content.Context;
 import android.graphics.Color;
 import android.graphics.PixelFormat;
+import android.graphics.Rect;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.provider.Settings;
+import android.util.DisplayMetrics;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
@@ -20,6 +23,8 @@ import com.sindromegames.chatoverlay.settings.AppSettings;
 import com.sindromegames.chatoverlay.ui.ChatListView;
 
 public final class OverlayWindow {
+    private static final String TAG = "OverlayWindow";
+
     private final Context context;
     private final WindowManager windowManager;
     private final Runnable stateChanged;
@@ -31,15 +36,15 @@ public final class OverlayWindow {
 
     public OverlayWindow(Context context, Runnable stateChanged) {
         this.context = context.getApplicationContext();
-        this.windowManager = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
+        this.windowManager = (WindowManager) this.context.getSystemService(Context.WINDOW_SERVICE);
         this.stateChanged = stateChanged;
-        this.settings = AppSettings.load(context);
+        this.settings = AppSettings.load(this.context);
     }
 
     public boolean isVisible() { return root != null; }
 
     public void show() {
-        if (isVisible() || !Settings.canDrawOverlays(context)) return;
+        if (isVisible() || windowManager == null || !Settings.canDrawOverlays(context)) return;
         settings = AppSettings.load(context);
         root = buildView();
         parameters = new WindowManager.LayoutParams(settings.overlayWidth, settings.overlayHeight,
@@ -51,14 +56,18 @@ public final class OverlayWindow {
         parameters.x = settings.overlayX;
         parameters.y = settings.overlayY;
         parameters.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING;
+        clampGeometry();
         applyClickThroughFlags();
         try {
             windowManager.addView(root, parameters);
+            saveGeometry();
             ChatBus.updateOverlay(true, settings.overlayClickThrough);
             stateChanged.run();
-        } catch (RuntimeException ignored) {
+        } catch (RuntimeException failure) {
+            Log.e(TAG, "Unable to attach floating overlay", failure);
             root = null;
             parameters = null;
+            chat = null;
             ChatBus.updateOverlay(false, false);
         }
     }
@@ -66,10 +75,15 @@ public final class OverlayWindow {
     public void hide() {
         if (root == null) return;
         saveGeometry();
-        try { windowManager.removeView(root); } catch (RuntimeException ignored) {}
+        try {
+            if (windowManager != null) windowManager.removeView(root);
+        } catch (RuntimeException failure) {
+            Log.w(TAG, "Unable to detach floating overlay cleanly", failure);
+        }
         root = null;
         parameters = null;
         chat = null;
+        headerTitle = null;
         ChatBus.updateOverlay(false, false);
         stateChanged.run();
     }
@@ -77,17 +91,19 @@ public final class OverlayWindow {
     public void refreshSettings() {
         settings = AppSettings.load(context);
         if (chat != null) chat.refreshSettings();
-        if (root != null) {
+        if (root != null && parameters != null) {
             applyPanelOpacity();
             parameters.width = settings.overlayWidth;
             parameters.height = settings.overlayHeight;
+            clampGeometry();
             applyClickThroughFlags();
             updateLayout();
+            saveGeometry();
         }
     }
 
     public void toggleClickThrough() {
-        if (root == null) return;
+        if (root == null || parameters == null) return;
         settings.overlayClickThrough = !settings.overlayClickThrough;
         settings.save(context);
         applyClickThroughFlags();
@@ -157,8 +173,7 @@ public final class OverlayWindow {
 
     private int baseFlags() {
         return WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
-                | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS;
+                | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN;
     }
 
     private void applyClickThroughFlags() {
@@ -185,12 +200,45 @@ public final class OverlayWindow {
     }
 
     private void updateLayout() {
-        if (root == null || parameters == null) return;
-        try { windowManager.updateViewLayout(root, parameters); } catch (RuntimeException ignored) {}
+        if (root == null || parameters == null || windowManager == null) return;
+        clampGeometry();
+        try {
+            windowManager.updateViewLayout(root, parameters);
+        } catch (RuntimeException failure) {
+            Log.w(TAG, "Unable to update floating overlay geometry", failure);
+        }
+    }
+
+    private void clampGeometry() {
+        if (parameters == null || windowManager == null) return;
+        Rect bounds = displayBounds();
+        int availableWidth = Math.max(1, bounds.width());
+        int availableHeight = Math.max(1, bounds.height());
+        int minimumWidth = Math.min(dp(280), availableWidth);
+        int minimumHeight = Math.min(dp(240), availableHeight);
+
+        parameters.width = Math.max(minimumWidth, Math.min(parameters.width, availableWidth));
+        parameters.height = Math.max(minimumHeight, Math.min(parameters.height, availableHeight));
+
+        int maxX = Math.max(bounds.left, bounds.right - parameters.width);
+        int maxY = Math.max(bounds.top, bounds.bottom - parameters.height);
+        parameters.x = Math.max(bounds.left, Math.min(parameters.x, maxX));
+        parameters.y = Math.max(bounds.top, Math.min(parameters.y, maxY));
+    }
+
+    @SuppressWarnings("deprecation")
+    private Rect displayBounds() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            return new Rect(windowManager.getCurrentWindowMetrics().getBounds());
+        }
+        DisplayMetrics metrics = new DisplayMetrics();
+        windowManager.getDefaultDisplay().getRealMetrics(metrics);
+        return new Rect(0, 0, metrics.widthPixels, metrics.heightPixels);
     }
 
     private void saveGeometry() {
         if (parameters == null) return;
+        clampGeometry();
         settings.overlayX = parameters.x;
         settings.overlayY = parameters.y;
         settings.overlayWidth = parameters.width;
@@ -204,18 +252,22 @@ public final class OverlayWindow {
         @Override public boolean onTouch(View view, MotionEvent event) {
             if (parameters == null) return false;
             if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
-                startRawX = event.getRawX(); startRawY = event.getRawY();
-                startX = parameters.x; startY = parameters.y;
+                startRawX = event.getRawX();
+                startRawY = event.getRawY();
+                startX = parameters.x;
+                startY = parameters.y;
                 return true;
             }
             if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
                 parameters.x = startX + Math.round(event.getRawX() - startRawX);
-                parameters.y = Math.max(0, startY + Math.round(event.getRawY() - startRawY));
-                updateLayout(); return true;
+                parameters.y = startY + Math.round(event.getRawY() - startRawY);
+                updateLayout();
+                return true;
             }
             if (event.getActionMasked() == MotionEvent.ACTION_UP
                     || event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
-                saveGeometry(); return true;
+                saveGeometry();
+                return true;
             }
             return false;
         }
@@ -227,20 +279,22 @@ public final class OverlayWindow {
         @Override public boolean onTouch(View view, MotionEvent event) {
             if (parameters == null) return false;
             if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
-                startRawX = event.getRawX(); startRawY = event.getRawY();
-                startWidth = parameters.width; startHeight = parameters.height;
+                startRawX = event.getRawX();
+                startRawY = event.getRawY();
+                startWidth = parameters.width;
+                startHeight = parameters.height;
                 return true;
             }
             if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
-                parameters.width = Math.max(dp(280), startWidth
-                        + Math.round(event.getRawX() - startRawX));
-                parameters.height = Math.max(dp(240), startHeight
-                        + Math.round(event.getRawY() - startRawY));
-                updateLayout(); return true;
+                parameters.width = startWidth + Math.round(event.getRawX() - startRawX);
+                parameters.height = startHeight + Math.round(event.getRawY() - startRawY);
+                updateLayout();
+                return true;
             }
             if (event.getActionMasked() == MotionEvent.ACTION_UP
                     || event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
-                saveGeometry(); return true;
+                saveGeometry();
+                return true;
             }
             return false;
         }
