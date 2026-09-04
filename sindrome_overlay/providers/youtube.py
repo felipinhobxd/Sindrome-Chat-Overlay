@@ -15,7 +15,7 @@ import requests
 
 from ..events import ProviderEvent
 from ..i18n import normalize_language, tr
-from ..models import ChatMessage, clean_text, parse_timestamp_usec
+from ..models import ChatEmote, ChatMessage, clean_text, parse_timestamp_usec
 from ..url_utils import normalize_youtube_input, youtube_video_id
 from .base import BaseProvider
 
@@ -195,8 +195,12 @@ def extract_video_id_from_url(value: str) -> str:
     if parsed.path == "/watch":
         candidate = parse_qs(parsed.query).get("v", [""])[0]
         return candidate if _VIDEO_ID_RE.fullmatch(candidate) else ""
-    if parsed.netloc.lower().removeprefix("www.") == "youtu.be":
+    host = parsed.netloc.lower().removeprefix("www.")
+    if host == "youtu.be":
         candidate = parsed.path.strip("/").split("/")[0]
+        return candidate if _VIDEO_ID_RE.fullmatch(candidate) else ""
+    if host in {"youtube.com", "m.youtube.com"} and parsed.path.startswith("/live/"):
+        candidate = parsed.path.split("/", 3)[2]
         return candidate if _VIDEO_ID_RE.fullmatch(candidate) else ""
     return ""
 
@@ -237,6 +241,79 @@ def youtube_messages_from_actions(
     return messages, deletions
 
 
+def _youtube_text_and_emotes(value: Any) -> tuple[str, tuple[ChatEmote, ...]]:
+    if not isinstance(value, dict):
+        return clean_text(value), ()
+    runs = value.get("runs")
+    if not isinstance(runs, list):
+        return clean_text(value), ()
+
+    parts: list[str] = []
+    emotes: list[ChatEmote] = []
+    cursor = 0
+    for run in runs:
+        if not isinstance(run, dict):
+            continue
+        if "text" in run:
+            fragment = str(run.get("text") or "")
+            parts.append(fragment)
+            cursor += len(fragment)
+            continue
+        emoji = run.get("emoji")
+        if not isinstance(emoji, dict):
+            continue
+        shortcuts = emoji.get("shortcuts") or emoji.get("searchTerms") or []
+        name = str(shortcuts[0]) if isinstance(shortcuts, list) and shortcuts else str(emoji.get("emojiId") or "")
+        if not name:
+            continue
+        start = cursor
+        parts.append(name)
+        cursor += len(name)
+        image_url = _youtube_emoji_image_url(emoji)
+        if image_url and (emoji.get("isCustomEmoji") is True or (name.startswith(":") and name.endswith(":"))):
+            emotes.append(
+                ChatEmote(
+                    str(emoji.get("emojiId") or name),
+                    start,
+                    cursor,
+                    name,
+                    image_url,
+                )
+            )
+
+    text = "".join(parts)
+    leading = len(text) - len(text.lstrip())
+    trimmed = text.strip()
+    if not leading and len(trimmed) == len(text):
+        return text, tuple(emotes)
+    adjusted = tuple(
+        ChatEmote(
+            emote.emote_id,
+            emote.start - leading,
+            emote.end - leading,
+            emote.name,
+            emote.image_url,
+        )
+        for emote in emotes
+        if emote.start >= leading and emote.end <= leading + len(trimmed)
+    )
+    return trimmed, adjusted
+
+
+def _youtube_emoji_image_url(emoji: dict[str, Any]) -> str:
+    image = emoji.get("image")
+    thumbnails = image.get("thumbnails") if isinstance(image, dict) else None
+    if not isinstance(thumbnails, list):
+        return ""
+    result = ""
+    for item in thumbnails:
+        if isinstance(item, dict) and item.get("url"):
+            result = str(item["url"])
+    if result.startswith("//"):
+        result = f"https:{result}"
+    return result if result.startswith("https://") else ""
+
+
 def _message_from_renderer(item: dict[str, Any], language: str = "en") -> ChatMessage | None:
     renderer_types = (
         ("liveChatTextMessageRenderer", "message"),
@@ -259,13 +336,16 @@ def _message_from_renderer(item: dict[str, Any], language: str = "en") -> ChatMe
 
     author = clean_text(renderer.get("authorName")) or "YouTube"
     author_id = _youtube_renderer_author_id(renderer)
-    text = clean_text(renderer.get("message"))
+    text, emotes = _youtube_text_and_emotes(renderer.get("message"))
     if not text:
         text = clean_text(renderer.get("headerSubtext"))
+        emotes = ()
     if not text:
         text = clean_text(renderer.get("primaryText"))
+        emotes = ()
     if not text:
         text = clean_text(renderer.get("subtext"))
+        emotes = ()
     if not text and kind == "paid":
         text = tr(language, "super_chat_sent")
     if not text and kind == "membership":
@@ -292,6 +372,7 @@ def _message_from_renderer(item: dict[str, Any], language: str = "en") -> ChatMe
         amount=clean_text(renderer.get("purchaseAmountText")),
         message_id=str(renderer.get("id") or ""),
         kind=kind,
+        emotes=emotes,
     )
 
 
@@ -556,7 +637,6 @@ class YouTubeProvider(BaseProvider):
             if live_id:
                 return live_id
 
-        # Some /live responses are watch pages without a redirect.
         if '"isLiveNow":true' in response.text or "BADGE_STYLE_TYPE_LIVE_NOW" in response.text:
             match = _VIDEO_ID_IN_HTML.search(response.text)
             if match:
