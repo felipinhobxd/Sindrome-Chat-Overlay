@@ -48,11 +48,11 @@ class EmoteMessageLabel(QLabel):
             self.setTextFormat(Qt.PlainText)
             self.setText(self.message.text)
             return
-        sources = {
-            emote_id: source
-            for emote_id in self.emote_ids
-            if (source := self.asset_cache.emote_source(emote_id))
-        }
+        sources: dict[str, str] = {}
+        for emote in self.message.emotes:
+            source = self.asset_cache.emote_source(emote.emote_id, emote.image_url)
+            if source:
+                sources[emote.emote_id] = source
         self.setTextFormat(Qt.RichText)
         self.setText(
             build_message_html(
