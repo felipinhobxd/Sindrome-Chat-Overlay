@@ -1,22 +1,25 @@
 from __future__ import annotations
 
+import logging
 import time
 from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QCloseEvent
 from PySide6.QtWidgets import QFileDialog, QLabel, QMessageBox, QStackedWidget
 
 from .. import __version__
 from ..diagnostics import export_diagnostics
 from ..feature_i18n import feature_tr
+from ..obs_source import ObsChatSourceServer, ObsSourceConfig
 from ..profiles import (
     apply_overlay_profile,
     iter_profile_choices,
     normalize_profile_ref,
     resolve_profile,
 )
+from ..settings import Settings, SettingsStore
 from .feature_settings_dialog import SettingsDialog
 from .message_list import MessageCardDelegate, MessageListModel, VirtualMessageListView
 from .overlay import OverlayWindow as _LegacyOverlayWindow
@@ -24,7 +27,51 @@ from .theme import build_stylesheet
 
 
 class OverlayWindow(_LegacyOverlayWindow):
-    """Desktop overlay with virtualized messages, profiles and support diagnostics."""
+    """Desktop overlay with virtualized messages, OBS source, profiles and diagnostics."""
+
+    def __init__(
+        self,
+        settings: Settings,
+        store: SettingsStore,
+        logger: logging.Logger,
+    ) -> None:
+        self.obs_source = ObsChatSourceServer(logger, self._obs_config(settings))
+        super().__init__(settings, store, logger)
+        self._sync_obs_source(seed_history=True)
+
+    @staticmethod
+    def _obs_config(settings: Settings) -> ObsSourceConfig:
+        return ObsSourceConfig(
+            port=settings.obs_port,
+            max_messages=settings.obs_max_messages,
+            font_size=settings.obs_font_size,
+            show_platform_labels=settings.obs_show_platform_labels,
+            show_badges=settings.obs_show_badges,
+            show_timestamps=settings.obs_show_timestamps,
+            message_background_opacity=settings.obs_message_background_opacity,
+        )
+
+    def _sync_obs_source(self, *, seed_history: bool = False) -> None:
+        config = self._obs_config(self.settings).normalized()
+        port_changed = self.obs_source.requested_port != config.port
+        if port_changed and self.obs_source.running:
+            self.obs_source.stop()
+        self.obs_source.configure(config)
+
+        if not self.settings.obs_enabled:
+            self.obs_source.stop()
+            return
+
+        started = self.obs_source.running or self.obs_source.start()
+        if not started:
+            self.log.warning(
+                "OBS browser source is enabled but unavailable on port %s: %s",
+                config.port,
+                self.obs_source.last_error,
+            )
+            return
+        if seed_history or port_changed:
+            self.obs_source.replace_messages(list(self.messages))
 
     def _build_ui(self) -> None:
         # Reuse the mature header/tray/window implementation and replace only the
@@ -155,6 +202,7 @@ class OverlayWindow(_LegacyOverlayWindow):
             self.settings,
             self,
             youtube_connection_mode=self.youtube_connection_mode,
+            obs_source_url=self.obs_source.url if self.obs_source.running else "",
         )
         dialog.diagnostics_requested.connect(lambda: self._export_diagnostics(dialog))
         dialog.setStyleSheet(build_stylesheet(self.settings))
@@ -164,6 +212,7 @@ class OverlayWindow(_LegacyOverlayWindow):
         updated = dialog.settings()
         self.settings = updated
         self.store.save(self.settings)
+        self._sync_obs_source(seed_history=True)
         self.notification_sounds.reset_limit()
         if not self.settings.check_for_updates:
             self._stop_update_checker()
@@ -220,6 +269,7 @@ class OverlayWindow(_LegacyOverlayWindow):
         )
 
     def _diagnostic_runtime(self) -> dict[str, object]:
+        obs_snapshot = self.obs_source.snapshot()
         return {
             "youtube_connection_mode": self.youtube_connection_mode,
             "providers": [provider.platform for provider in self.providers],
@@ -232,6 +282,10 @@ class OverlayWindow(_LegacyOverlayWindow):
             "minimized": self.isMinimized(),
             "window_width": self.width(),
             "window_height": self.height(),
+            "obs_source_enabled": self.settings.obs_enabled,
+            "obs_source_running": self.obs_source.running,
+            "obs_source_port": self.obs_source.bound_port or self.settings.obs_port,
+            "obs_source_message_count": len(obs_snapshot.get("messages", [])),
             "statuses": {
                 platform: label.text()
                 for platform, label in self.status_labels.items()
@@ -241,6 +295,8 @@ class OverlayWindow(_LegacyOverlayWindow):
     def _append_card(self, message) -> None:
         # OverlayWindow.add_message already appended to self.messages before this call.
         self.message_model.append_message(message)
+        if self.settings.obs_enabled and self.obs_source.running:
+            self.obs_source.publish_message(message)
         self._update_empty_state()
         self.message_view.schedule_editor_refresh()
         self._schedule_scroll_to_bottom()
@@ -276,9 +332,11 @@ class OverlayWindow(_LegacyOverlayWindow):
             created = self.message_model.created_at(0)
             if created is None or now - created < lifetime:
                 break
+            # OBS history is intentionally independent from desktop expiry.
             self._remove_at(0)
 
     def _remove_message_id(self, message_id: str) -> None:
+        self.obs_source.remove_message(message_id)
         index = self.message_model.find_message_id(message_id)
         if index >= 0:
             self._remove_at(index)
@@ -292,6 +350,7 @@ class OverlayWindow(_LegacyOverlayWindow):
         self.message_view.schedule_editor_refresh()
 
     def clear_messages(self, platform: str = "") -> None:
+        self.obs_source.clear_messages(platform)
         if not platform:
             self.messages.clear()
             self.message_model.clear()
@@ -324,3 +383,7 @@ class OverlayWindow(_LegacyOverlayWindow):
             self.message_stack.setCurrentWidget(self.message_view)
         else:
             self.message_stack.setCurrentWidget(self.empty_state)
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        self.obs_source.stop()
+        super().closeEvent(event)
