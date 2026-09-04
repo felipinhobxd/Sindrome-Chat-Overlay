@@ -43,7 +43,7 @@ public final class YouTubeParserTest {
                 + "\"emojiId\":\"UC-custom-1\",\"shortcuts\":[\":sindrome:\"],"
                 + "\"isCustomEmoji\":true,\"image\":{\"thumbnails\":["
                 + "{\"url\":\"https://yt3.ggpht.com/small\"},"
-                + "{\"url\":\"https://yt3.ggpht.com/large\"}]}}},{\"text\":\"!\"}]}}}}" );
+                + "{\"url\":\"https://yt3.ggpht.com/large\"}]}}},{\"text\":\"!\"}]}}}");
         ChatMessage message = YouTubeProvider.compatibilityMessage(item);
         assertNotNull(message);
         assertEquals("Oi :sindrome:!", message.text);
