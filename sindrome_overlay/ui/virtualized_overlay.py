@@ -1,16 +1,30 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime
+from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QLabel, QStackedWidget
+from PySide6.QtGui import QAction
+from PySide6.QtWidgets import QFileDialog, QLabel, QMessageBox, QStackedWidget
 
+from .. import __version__
+from ..diagnostics import export_diagnostics
+from ..feature_i18n import feature_tr
+from ..profiles import (
+    apply_overlay_profile,
+    iter_profile_choices,
+    normalize_profile_ref,
+    resolve_profile,
+)
+from .feature_settings_dialog import SettingsDialog
 from .message_list import MessageCardDelegate, MessageListModel, VirtualMessageListView
 from .overlay import OverlayWindow as _LegacyOverlayWindow
+from .theme import build_stylesheet
 
 
 class OverlayWindow(_LegacyOverlayWindow):
-    """Desktop overlay using a QListView-backed, viewport-virtualized message feed."""
+    """Desktop overlay with virtualized messages, profiles and support diagnostics."""
 
     def _build_ui(self) -> None:
         # Reuse the mature header/tray/window implementation and replace only the
@@ -51,7 +65,9 @@ class OverlayWindow(_LegacyOverlayWindow):
 
         self.message_stack = QStackedWidget(self)
         self.message_stack.setObjectName("MessageStack")
-        self.message_stack.setStyleSheet("QStackedWidget#MessageStack { background: transparent; border: none; }")
+        self.message_stack.setStyleSheet(
+            "QStackedWidget#MessageStack { background: transparent; border: none; }"
+        )
         self.message_stack.addWidget(self.empty_state)
         self.message_stack.addWidget(self.message_view)
         self.message_stack.setCurrentWidget(self.empty_state)
@@ -65,6 +81,162 @@ class OverlayWindow(_LegacyOverlayWindow):
         self.message_layout = None
         self.cards.clear()
         self.cards_by_id.clear()
+
+    def _build_tray(self, icon) -> None:
+        super()._build_tray(icon)
+        self.profile_menu = None
+        if self.tray is None:
+            return
+        menu = self.tray.contextMenu()
+        if menu is None:
+            return
+        self.profile_menu = menu.addMenu("")
+        menu.removeAction(self.profile_menu.menuAction())
+        menu.insertMenu(self.settings_action, self.profile_menu)
+        self._refresh_profile_menu()
+
+    def _retranslate_ui(self, *, reset_statuses: bool = False) -> None:
+        super()._retranslate_ui(reset_statuses=reset_statuses)
+        if getattr(self, "profile_menu", None) is not None:
+            self.profile_menu.setTitle(feature_tr(self.settings.language, "profiles_menu"))
+            self._refresh_profile_menu()
+
+    def _refresh_profile_menu(self) -> None:
+        menu = getattr(self, "profile_menu", None)
+        if menu is None:
+            return
+        menu.clear()
+        custom_started = False
+        active = normalize_profile_ref(
+            self.settings.active_overlay_profile,
+            self.settings.overlay_profiles,
+        )
+        for profile_ref, label, is_builtin in iter_profile_choices(
+            self.settings.overlay_profiles,
+            self.settings.language,
+        ):
+            if not is_builtin and not custom_started:
+                menu.addSeparator()
+                custom_started = True
+            action = QAction(label, menu)
+            action.setCheckable(True)
+            action.setChecked(profile_ref == active)
+            action.triggered.connect(
+                lambda _checked=False, ref=profile_ref: self._apply_overlay_profile_ref(ref)
+            )
+            menu.addAction(action)
+
+    def _apply_overlay_profile_ref(self, profile_ref: str) -> None:
+        values = resolve_profile(profile_ref, self.settings.overlay_profiles)
+        if values is None:
+            return
+        self._remember_geometry()
+        updated = apply_overlay_profile(self.settings, values)
+        updated.active_overlay_profile = profile_ref
+        self.settings = updated
+        try:
+            self.store.save(self.settings)
+        except OSError as exc:
+            self.log.warning("Unable to save overlay profile selection: %s", exc)
+
+        self._restore_geometry()
+        self._apply_window_flags()
+        self._apply_visual_settings()
+        self._retranslate_ui()
+        self._rebuild_cards()
+        self._refresh_profile_menu()
+
+    def open_settings(self) -> None:
+        if self.settings.click_through:
+            self.set_click_through(False)
+        # Capture the actual current window geometry before a custom profile can be saved.
+        self._remember_geometry()
+        dialog = SettingsDialog(
+            self.settings,
+            self,
+            youtube_connection_mode=self.youtube_connection_mode,
+        )
+        dialog.diagnostics_requested.connect(lambda: self._export_diagnostics(dialog))
+        dialog.setStyleSheet(build_stylesheet(self.settings))
+        if dialog.exec() != SettingsDialog.Accepted:
+            return
+
+        updated = dialog.settings()
+        self.settings = updated
+        self.store.save(self.settings)
+        self.notification_sounds.reset_limit()
+        if not self.settings.check_for_updates:
+            self._stop_update_checker()
+        else:
+            self._start_update_check()
+        self._restore_geometry()
+        self._apply_window_flags()
+        self._apply_visual_settings()
+        self._retranslate_ui(reset_statuses=True)
+        self._rebuild_cards()
+        self._restart_providers()
+        self.set_click_through(self.settings.click_through)
+        self._refresh_profile_menu()
+
+    def _export_diagnostics(self, parent=None) -> None:
+        downloads = Path.home() / "Downloads"
+        folder = downloads if downloads.is_dir() else Path.home()
+        filename = f"SindromeChatOverlay-Diagnostic-{datetime.now().strftime('%Y%m%d-%H%M%S')}.zip"
+        destination, _selected_filter = QFileDialog.getSaveFileName(
+            parent or self,
+            feature_tr(self.settings.language, "diagnostic_save_title"),
+            str(folder / filename),
+            "ZIP (*.zip)",
+        )
+        if not destination:
+            return
+        try:
+            saved = export_diagnostics(
+                Path(destination),
+                self.settings,
+                self._diagnostic_runtime(),
+                app_version=__version__,
+            )
+        except Exception as exc:  # noqa: BLE001 - support export UI boundary
+            self.log.warning("Unable to export diagnostic package: %s", exc)
+            QMessageBox.warning(
+                parent or self,
+                feature_tr(self.settings.language, "diagnostic_failed_title"),
+                feature_tr(
+                    self.settings.language,
+                    "diagnostic_failed_message",
+                    error=str(exc),
+                ),
+            )
+            return
+        QMessageBox.information(
+            parent or self,
+            feature_tr(self.settings.language, "diagnostic_saved_title"),
+            feature_tr(
+                self.settings.language,
+                "diagnostic_saved_message",
+                path=str(saved),
+            ),
+        )
+
+    def _diagnostic_runtime(self) -> dict[str, object]:
+        return {
+            "youtube_connection_mode": self.youtube_connection_mode,
+            "providers": [provider.platform for provider in self.providers],
+            "message_count": len(self.messages),
+            "active_message_cards": self.message_view.active_editor_count,
+            "global_hotkey_registered": bool(self.global_hotkey.is_registered),
+            "always_on_top": self.settings.always_on_top,
+            "click_through": self.settings.click_through,
+            "visible": self.isVisible(),
+            "minimized": self.isMinimized(),
+            "window_width": self.width(),
+            "window_height": self.height(),
+            "statuses": {
+                platform: label.text()
+                for platform, label in self.status_labels.items()
+            },
+        }
 
     def _append_card(self, message) -> None:
         # OverlayWindow.add_message already appended to self.messages before this call.
