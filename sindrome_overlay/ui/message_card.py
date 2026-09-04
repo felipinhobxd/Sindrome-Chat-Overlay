@@ -141,6 +141,7 @@ class MessageCard(QFrame):
 
         meta = QHBoxLayout()
         meta.setSpacing(6)
+        self._meta_layout = meta
         if settings.show_platform_labels:
             platform = QLabel("TWITCH" if message.platform == "twitch" else "YOUTUBE")
             platform.setObjectName("MetaText")
@@ -197,6 +198,7 @@ class MessageCard(QFrame):
         bubble_layout = QHBoxLayout(self.message_bubble)
         bubble_layout.setContentsMargins(7, 3, 7, 4)
         bubble_layout.setSpacing(0)
+        self._bubble_layout = bubble_layout
         self.message_label = EmoteMessageLabel(
             message,
             settings,
@@ -205,6 +207,56 @@ class MessageCard(QFrame):
         )
         bubble_layout.addWidget(self.message_label)
         outer.addWidget(self.message_bubble, 0, Qt.AlignLeft)
+
+    def required_height_for_width(self, width: int) -> int:
+        """Measure and apply the unclipped height for the current wrapped bubble.
+
+        QLabel.sizeHint() is not reliable for a word-wrapped label whose parent is
+        deliberately compact. The virtualized list used that hint and could reserve
+        only two lines even though the actual bubble wrapped to three or more. Measure
+        with Qt's height-for-width API and apply those minimum heights before the list
+        caches the row geometry.
+        """
+        outer_margins = self._outer_layout.contentsMargins()
+        available = max(80, width - outer_margins.left() - outer_margins.right())
+
+        bubble_width = self.message_bubble.width()
+        if bubble_width <= 1 or bubble_width > available:
+            bubble_width = min(available, max(80, self.message_bubble.sizeHint().width()))
+
+        bubble_margins = self._bubble_layout.contentsMargins()
+        label_width = max(
+            1,
+            bubble_width - bubble_margins.left() - bubble_margins.right(),
+        )
+        label_height = self.message_label.heightForWidth(label_width)
+        if label_height <= 0:
+            label_height = self.message_label.sizeHint().height()
+        label_height = max(1, label_height)
+
+        bubble_height = (
+            bubble_margins.top()
+            + label_height
+            + bubble_margins.bottom()
+        )
+
+        # The row may become taller while the compact bubble keeps its stale short
+        # size hint. Explicitly update the child minimums so the extra row height is
+        # actually used by the wrapped text instead of becoming blank space below it.
+        self.message_label.setMinimumHeight(label_height)
+        self.message_bubble.setMinimumHeight(bubble_height)
+        self.message_label.updateGeometry()
+        self.message_bubble.updateGeometry()
+
+        meta_height = max(1, self._meta_layout.sizeHint().height())
+        return max(
+            1,
+            outer_margins.top()
+            + meta_height
+            + self._outer_layout.spacing()
+            + bubble_height
+            + outer_margins.bottom(),
+        )
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)

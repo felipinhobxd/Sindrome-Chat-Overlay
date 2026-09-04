@@ -183,8 +183,12 @@ class MessageCardDelegate(QStyledItemDelegate):
         layout = editor.layout()
         if layout is not None:
             layout.activate()
-        actual_height = max(1, editor.sizeHint().height())
         width = max(80, option.rect.width())
+        actual_height = max(
+            1,
+            editor.sizeHint().height(),
+            editor.required_height_for_width(width),
+        )
         key = self._cache_key(index, width)
         previous = self._height_cache.get(key)
         if previous is None or abs(previous - actual_height) > 1:
