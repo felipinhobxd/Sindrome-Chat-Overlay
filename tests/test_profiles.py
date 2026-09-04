@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 from sindrome_overlay.profiles import (
+    MAX_CUSTOM_PROFILES,
     apply_overlay_profile,
     capture_overlay_profile,
     normalize_custom_profiles,
@@ -42,6 +43,12 @@ class OverlayProfileTests(unittest.TestCase):
         self.assertNotIn("youtube_api_key", stored)
         self.assertNotIn("twitch_channel", stored)
         self.assertNotIn("click_through", stored)
+
+    def test_custom_profile_count_is_bounded(self) -> None:
+        profiles = normalize_custom_profiles(
+            {f"Profile {index}": {"font_size": 12 + index} for index in range(50)}
+        )
+        self.assertEqual(len(profiles), MAX_CUSTOM_PROFILES)
 
     def test_applying_profile_preserves_connections_secrets_and_sound(self) -> None:
         original = Settings(
@@ -95,6 +102,7 @@ class OverlayProfileTests(unittest.TestCase):
         self.assertEqual(resolve_profile("custom:Desk", custom), {"font_size": 16})
         self.assertIsNone(resolve_profile("builtin:does-not-exist", custom))
         self.assertEqual(normalize_profile_ref("custom:Desk", custom), "custom:Desk")
+        self.assertEqual(normalize_profile_ref("custom:  Desk  ", custom), "custom:Desk")
         self.assertEqual(normalize_profile_ref("custom:Missing", custom), "")
 
 
