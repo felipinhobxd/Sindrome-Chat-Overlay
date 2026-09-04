@@ -9,6 +9,7 @@ from sindrome_overlay.providers.twitch import (
     parse_twitch_line,
 )
 from sindrome_overlay.providers.youtube import (
+    extract_video_id_from_url,
     official_message_from_item,
     youtube_messages_from_actions,
 )
@@ -129,6 +130,51 @@ class YouTubeParserTests(unittest.TestCase):
         self.assertEqual(messages[0].author_id, "UC-visitor")
         self.assertEqual(messages[0].text, "Boa live!")
         self.assertEqual(messages[0].badges, ("MODERATOR",))
+
+    def test_innertube_custom_emote_preserves_image_and_span(self) -> None:
+        actions = [
+            {
+                "addChatItemAction": {
+                    "item": {
+                        "liveChatTextMessageRenderer": {
+                            "id": "yt-emote",
+                            "authorName": {"simpleText": "Visitante"},
+                            "message": {
+                                "runs": [
+                                    {"text": "Oi "},
+                                    {
+                                        "emoji": {
+                                            "emojiId": "UC-custom-1",
+                                            "shortcuts": [":sindrome:"],
+                                            "isCustomEmoji": True,
+                                            "image": {
+                                                "thumbnails": [
+                                                    {"url": "https://yt3.ggpht.com/small"},
+                                                    {"url": "https://yt3.ggpht.com/large"},
+                                                ]
+                                            },
+                                        }
+                                    },
+                                    {"text": "!"},
+                                ]
+                            },
+                        }
+                    }
+                }
+            }
+        ]
+        messages, _ = youtube_messages_from_actions(actions)
+        self.assertEqual(messages[0].text, "Oi :sindrome:!")
+        self.assertEqual(len(messages[0].emotes), 1)
+        emote = messages[0].emotes[0]
+        self.assertEqual((emote.start, emote.end, emote.name), (3, 13, ":sindrome:"))
+        self.assertEqual(emote.image_url, "https://yt3.ggpht.com/large")
+
+    def test_direct_live_url_extracts_video_id(self) -> None:
+        self.assertEqual(
+            extract_video_id_from_url("https://www.youtube.com/live/dQw4w9WgXcQ?si=share"),
+            "dQw4w9WgXcQ",
+        )
 
     def test_paid_message_and_deletion(self) -> None:
         actions = [
