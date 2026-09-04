@@ -4,6 +4,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.IOException;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
@@ -29,14 +30,15 @@ public final class NetClient {
     }
 
     public ResponseData get(String url) throws IOException {
-        return execute(new Request.Builder().url(url).header("User-Agent", userAgent())
-                .header("Accept-Language", "en-US,en;q=0.8").get().build());
+        Request.Builder builder = new Request.Builder().url(url).get();
+        applyBrowserHeaders(builder, builder.build().url());
+        return execute(builder.build());
     }
 
     public JSONObject getJson(String url, Map<String, String> parameters)
             throws IOException, JSONException {
         HttpUrl parsed = HttpUrl.parse(url);
-        if (parsed == null) throw new IOException("Invalid HTTPS URL");
+        if (parsed == null || !parsed.isHttps()) throw new IOException("Invalid HTTPS URL");
         HttpUrl.Builder builder = parsed.newBuilder();
         for (Map.Entry<String, String> item : parameters.entrySet()) {
             if (item.getValue() != null && !item.getValue().isEmpty())
@@ -51,8 +53,8 @@ public final class NetClient {
     public ResponseData postJson(String url, JSONObject payload, Map<String, String> headers)
             throws IOException {
         Request.Builder builder = new Request.Builder().url(url)
-                .header("User-Agent", userAgent())
                 .post(RequestBody.create(payload.toString(), JSON));
+        applyBrowserHeaders(builder, builder.build().url());
         for (Map.Entry<String, String> item : headers.entrySet())
             builder.header(item.getKey(), item.getValue());
         return execute(builder.build());
@@ -67,9 +69,26 @@ public final class NetClient {
 
     public void cancelAll() { client.dispatcher().cancelAll(); }
 
+    private static void applyBrowserHeaders(Request.Builder builder, HttpUrl url) {
+        builder.header("User-Agent", userAgent())
+                .header("Accept", "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8")
+                .header("Accept-Language", "en-US,en;q=0.9");
+        if (isYouTubeHost(url.host())) {
+            // Avoid YouTube's consent interstitial, which does not contain the live-chat bootstrap data.
+            builder.header("Cookie", "SOCS=CAI");
+        }
+    }
+
+    static boolean isYouTubeHost(String hostValue) {
+        String host = hostValue == null ? "" : hostValue.toLowerCase(Locale.ROOT);
+        return host.equals("youtube.com") || host.equals("www.youtube.com")
+                || host.equals("m.youtube.com") || host.endsWith(".youtube.com");
+    }
+
     private static String userAgent() {
-        return "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 "
-                + "Chrome/131.0 Mobile Safari/537.36";
+        // The YouTube compatibility parser expects the normal web renderer rather than the mobile variant.
+        return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                + "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
     }
 
     public record ResponseData(int code, String finalUrl, String body) {}
@@ -84,4 +103,3 @@ public final class NetClient {
         }
     }
 }
-
