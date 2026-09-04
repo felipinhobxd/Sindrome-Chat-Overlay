@@ -213,7 +213,17 @@ class MessageCardDelegate(QStyledItemDelegate):
         option: QStyleOptionViewItem,
         index: QModelIndex,
     ) -> None:
-        """Lightweight fallback for the one frame before a visible editor opens."""
+        """Paint a lightweight fallback only until the real MessageCard is open.
+
+        Persistent editors are intentionally transparent. Painting this fallback
+        underneath an already-open editor therefore renders the author and message
+        twice, which is especially visible with coloured names and translucent
+        bubbles. Once the editor owns a row, it must be the row's only renderer.
+        """
+        view = self.parent()
+        if isinstance(view, QAbstractItemView) and view.isPersistentEditorOpen(index):
+            return
+
         message = index.data(MessageListModel.MessageRole)
         if not isinstance(message, ChatMessage):
             return
