@@ -29,6 +29,11 @@ class OverlayWindow(_LegacyOverlayWindow):
         self.message_model = MessageListModel(self)
         self.message_view = VirtualMessageListView(self.message_model, self)
         self.message_view.setObjectName("VirtualMessageList")
+        self.message_view.setStyleSheet(
+            "QListView#VirtualMessageList, QListView#VirtualMessageList::item {"
+            "background: transparent; border: none; outline: none; }"
+        )
+        self.message_view.viewport().setAutoFillBackground(False)
         self.message_delegate = MessageCardDelegate(
             self.settings,
             self.twitch_assets,
@@ -45,6 +50,7 @@ class OverlayWindow(_LegacyOverlayWindow):
 
         self.message_stack = QStackedWidget(self)
         self.message_stack.setObjectName("MessageStack")
+        self.message_stack.setStyleSheet("QStackedWidget#MessageStack { background: transparent; border: none; }")
         self.message_stack.addWidget(self.empty_state)
         self.message_stack.addWidget(self.message_view)
         self.message_stack.setCurrentWidget(self.empty_state)
