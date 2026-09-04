@@ -21,6 +21,17 @@ _JSON_SECRET_PATTERN = re.compile(
     r'(?i)("(?:youtube_api_key|api_key|token|secret)"\s*:\s*")[^"]*(")'
 )
 _MAX_LOG_BYTES = 2_000_000
+_RUNTIME_SECRET_KEYS = {
+    "api_key",
+    "youtube_api_key",
+    "token",
+    "access_token",
+    "refresh_token",
+    "secret",
+    "twitch_channel",
+    "youtube_input",
+    "channel_input",
+}
 
 
 def export_diagnostics(
@@ -145,11 +156,13 @@ def _sanitize_runtime(value: Any, *, depth: int = 0) -> Any:
         clean: dict[str, Any] = {}
         for key, item in list(value.items())[:100]:
             key_text = str(key)
-            if any(token in key_text.casefold() for token in ("key", "token", "secret", "channel", "input", "message")):
-                if key_text.casefold() in {"message_count", "active_message_cards"}:
-                    clean[key_text] = _sanitize_runtime(item, depth=depth + 1)
-                else:
-                    clean[key_text] = "[redacted]"
+            normalized_key = key_text.casefold()
+            if normalized_key in _RUNTIME_SECRET_KEYS or normalized_key.endswith("_secret"):
+                clean[key_text] = "[redacted]"
+                continue
+            # Runtime diagnostics intentionally report counts but never raw chat text.
+            if normalized_key in {"chat_messages", "messages", "last_message", "message_text"}:
+                clean[key_text] = "[redacted]"
                 continue
             clean[key_text] = _sanitize_runtime(item, depth=depth + 1)
         return clean
