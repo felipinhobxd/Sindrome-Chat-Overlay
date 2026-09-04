@@ -20,6 +20,7 @@ _QUERY_KEY_PATTERN = re.compile(r"(?i)([?&](?:key|api_key)=)[^&\s]+")
 _JSON_SECRET_PATTERN = re.compile(
     r'(?i)("(?:youtube_api_key|api_key|token|secret)"\s*:\s*")[^"]*(")'
 )
+_BEARER_PATTERN = re.compile(r"(?i)(authorization\s*:\s*bearer\s+)[^\s]+")
 _MAX_LOG_BYTES = 2_000_000
 _RUNTIME_SECRET_KEYS = {
     "api_key",
@@ -157,7 +158,12 @@ def _sanitize_runtime(value: Any, *, depth: int = 0) -> Any:
         for key, item in list(value.items())[:100]:
             key_text = str(key)
             normalized_key = key_text.casefold()
-            if normalized_key in _RUNTIME_SECRET_KEYS or normalized_key.endswith("_secret"):
+            if (
+                normalized_key in _RUNTIME_SECRET_KEYS
+                or normalized_key.endswith("_secret")
+                or normalized_key.endswith("_token")
+                or normalized_key.endswith("_api_key")
+            ):
                 clean[key_text] = "[redacted]"
                 continue
             # Runtime diagnostics intentionally report counts but never raw chat text.
@@ -218,20 +224,16 @@ def _read_log_text(path: Path) -> str | None:
 def _redact_text(text: str, settings: Settings) -> str:
     redacted = _redact_generic(text)
     sensitive_values = (
-        settings.youtube_api_key.strip(),
-        settings.twitch_channel.strip(),
-        settings.youtube_input.strip(),
-        str(Path.home()),
+        (settings.youtube_api_key.strip(), "[REDACTED_API_KEY]"),
+        (settings.twitch_channel.strip(), "[REDACTED_CHANNEL]"),
+        (settings.youtube_input.strip(), "[REDACTED_YOUTUBE_INPUT]"),
     )
-    replacements = (
-        "[REDACTED_API_KEY]",
-        "[REDACTED_CHANNEL]",
-        "[REDACTED_YOUTUBE_INPUT]",
-        "%USERPROFILE%",
-    )
-    for value, replacement in zip(sensitive_values, replacements, strict=True):
-        if value:
-            redacted = redacted.replace(value, replacement)
+    for value, replacement in sensitive_values:
+        redacted = _replace_sensitive(redacted, value, replacement)
+
+    home = str(Path.home())
+    redacted = _replace_sensitive(redacted, home, "%USERPROFILE%")
+    redacted = _replace_sensitive(redacted, home.replace("\\", "/"), "%USERPROFILE%")
     return redacted
 
 
@@ -239,10 +241,17 @@ def _redact_generic(text: str) -> str:
     text = _API_KEY_PATTERN.sub("[REDACTED_API_KEY]", text)
     text = _QUERY_KEY_PATTERN.sub(r"\1[REDACTED]", text)
     text = _JSON_SECRET_PATTERN.sub(r"\1[REDACTED]\2", text)
+    text = _BEARER_PATTERN.sub(r"\1[REDACTED]", text)
     home = str(Path.home())
-    if home:
-        text = text.replace(home, "%USERPROFILE%")
+    text = _replace_sensitive(text, home, "%USERPROFILE%")
+    text = _replace_sensitive(text, home.replace("\\", "/"), "%USERPROFILE%")
     return text
+
+
+def _replace_sensitive(text: str, value: str, replacement: str) -> str:
+    if not value:
+        return text
+    return re.sub(re.escape(value), lambda _match: replacement, text, flags=re.IGNORECASE)
 
 
 def _readme(language: str) -> str:
