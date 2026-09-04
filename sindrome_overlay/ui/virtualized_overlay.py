@@ -42,6 +42,7 @@ class OverlayWindow(_LegacyOverlayWindow):
         self.message_view.setItemDelegate(self.message_delegate)
         self.message_view.viewport().installEventFilter(self)
         self.message_view.verticalScrollBar().rangeChanged.connect(self._on_scroll_range_changed)
+        self._scroll_update_pending = False
 
         self.empty_state = QLabel()
         self.empty_state.setObjectName("EmptyState")
@@ -70,10 +71,17 @@ class OverlayWindow(_LegacyOverlayWindow):
         self.message_model.append_message(message)
         self._update_empty_state()
         self.message_view.schedule_editor_refresh()
-        if self.settings.auto_scroll:
-            QTimer.singleShot(0, self._scroll_to_bottom)
-            # Exact row heights are learned lazily from visible MessageCards.
-            QTimer.singleShot(75, self._scroll_to_bottom)
+        self._schedule_scroll_to_bottom()
+
+    def _schedule_scroll_to_bottom(self) -> None:
+        if not self.settings.auto_scroll or self._scroll_update_pending:
+            return
+        self._scroll_update_pending = True
+        QTimer.singleShot(0, self._run_scheduled_scroll)
+
+    def _run_scheduled_scroll(self) -> None:
+        self._scroll_update_pending = False
+        self._scroll_to_bottom()
 
     def _scroll_to_bottom(self) -> None:
         if not self.settings.auto_scroll:
@@ -136,8 +144,8 @@ class OverlayWindow(_LegacyOverlayWindow):
         self.message_model.replace_messages(filtered)
         self.message_view.refresh_virtualization()
         self._update_empty_state()
-        if self.settings.auto_scroll and filtered:
-            QTimer.singleShot(0, self._scroll_to_bottom)
+        if filtered:
+            self._schedule_scroll_to_bottom()
 
     def _update_empty_state(self) -> None:
         if self.messages:
