@@ -5,7 +5,7 @@ from typing import Any, Mapping
 
 from .feature_i18n import feature_tr
 
-_MAX_CUSTOM_PROFILES = 12
+MAX_CUSTOM_PROFILES = 12
 _MAX_PROFILE_NAME = 40
 
 # Overlay profiles intentionally exclude credentials, channel inputs, update preferences,
@@ -127,7 +127,7 @@ def normalize_custom_profiles(value: Any) -> dict[str, dict[str, Any]]:
         return {}
     normalized: dict[str, dict[str, Any]] = {}
     for raw_name, raw_values in value.items():
-        if len(normalized) >= _MAX_CUSTOM_PROFILES:
+        if len(normalized) >= MAX_CUSTOM_PROFILES:
             break
         name = normalize_profile_name(raw_name)
         if not name or name in normalized:
@@ -146,10 +146,10 @@ def normalize_profile_ref(
         return ""
     if profile_ref.startswith("builtin:"):
         identifier = profile_ref.removeprefix("builtin:")
-        return profile_ref if identifier in _BUILTIN_PROFILES else ""
+        return f"builtin:{identifier}" if identifier in _BUILTIN_PROFILES else ""
     if profile_ref.startswith("custom:"):
         name = normalize_profile_name(profile_ref.removeprefix("custom:"))
-        return profile_ref if name and name in normalize_custom_profiles(custom_profiles) else ""
+        return f"custom:{name}" if name and name in normalize_custom_profiles(custom_profiles) else ""
     return ""
 
 
