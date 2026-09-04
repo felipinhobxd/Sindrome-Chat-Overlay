@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "1.8.0"
+  #define AppVersion "1.8.4"
 #endif
 
 #define AppName "Sindrome Chat Overlay"
@@ -18,7 +18,7 @@ AppSupportURL={#AppUrl}/issues
 AppUpdatesURL={#AppUrl}/releases/latest
 DefaultDirName={localappdata}\Programs\Sindrome Chat Overlay
 DefaultGroupName=Sindrome Chat Overlay
-DisableProgramGroupPage=yes
+PrivilegesRequired=lowest
 OutputDir=..\release
 OutputBaseFilename=SindromeChatOverlay-Setup-v{#AppVersion}
 SetupIconFile=..\assets\app.ico
@@ -26,18 +26,19 @@ UninstallDisplayIcon={app}\{#AppExeName}
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
-PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 CloseApplications=yes
 RestartApplications=no
-SetupLogging=yes
+AppMutex=SindromeChatOverlay.Singleton
+DisableProgramGroupPage=yes
+DisableWelcomePage=no
+LicenseFile=..\LICENSE
 VersionInfoVersion={#AppVersion}.0
 VersionInfoCompany={#AppPublisher}
-VersionInfoDescription={#AppName} installer
+VersionInfoDescription={#AppName} Setup
 VersionInfoProductName={#AppName}
 VersionInfoProductVersion={#AppVersion}
-VersionInfoCopyright=Copyright (c) 2026 Sindrome Games
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -53,21 +54,19 @@ Source: "..\dist\THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\dist\LICENSE.txt"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\Sindrome Chat Overlay"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"
+Name: "{group}\Sindrome Chat Overlay"; Filename: "{app}\{#AppExeName}"
+Name: "{autodesktop}\Sindrome Chat Overlay"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
 Name: "{group}\Uninstall Sindrome Chat Overlay"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\Sindrome Chat Overlay"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "{cm:LaunchProgram,Sindrome Chat Overlay}"; Flags: nowait postinstall skipifsilent; BeforeInstall: PrepareCleanPyInstallerLaunch
 
 [Code]
-function SetEnvironmentVariable(Name: string; Value: string): Boolean;
+function SetEnvironmentVariableW(lpName: string; lpValue: string): Boolean;
   external 'SetEnvironmentVariableW@kernel32.dll stdcall';
 
 procedure PrepareCleanPyInstallerLaunch;
 begin
-  if SetEnvironmentVariable('PYINSTALLER_RESET_ENVIRONMENT', '1') then
-    Log('Prepared clean PyInstaller environment for the post-install launch.')
-  else
-    Log('Warning: unable to set PYINSTALLER_RESET_ENVIRONMENT for the post-install launch.');
+  if not SetEnvironmentVariableW('PYINSTALLER_RESET_ENVIRONMENT', '1') then
+    RaiseException('Unable to prepare a clean application launch environment.');
 end;
