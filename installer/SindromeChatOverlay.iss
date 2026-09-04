@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "1.8.0"
+  #define AppVersion "1.8.4"
 #endif
 
 #define AppName "Sindrome Chat Overlay"
