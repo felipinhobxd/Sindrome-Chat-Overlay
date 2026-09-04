@@ -141,6 +141,7 @@ class MessageCard(QFrame):
 
         meta = QHBoxLayout()
         meta.setSpacing(6)
+        self._meta_layout = meta
         if settings.show_platform_labels:
             platform = QLabel("TWITCH" if message.platform == "twitch" else "YOUTUBE")
             platform.setObjectName("MetaText")
@@ -197,6 +198,7 @@ class MessageCard(QFrame):
         bubble_layout = QHBoxLayout(self.message_bubble)
         bubble_layout.setContentsMargins(7, 3, 7, 4)
         bubble_layout.setSpacing(0)
+        self._bubble_layout = bubble_layout
         self.message_label = EmoteMessageLabel(
             message,
             settings,
@@ -205,6 +207,46 @@ class MessageCard(QFrame):
         )
         bubble_layout.addWidget(self.message_label)
         outer.addWidget(self.message_bubble, 0, Qt.AlignLeft)
+
+    def required_height_for_width(self, width: int) -> int:
+        """Return the unclipped card height for the current wrapped bubble width.
+
+        QLabel.sizeHint() is not reliable for a word-wrapped label whose parent is
+        deliberately compact. The virtualized list used that hint and could reserve
+        only two lines even though the actual bubble wrapped to three or more. Measure
+        the label with Qt's height-for-width API instead, using the bubble width the
+        layout really selected.
+        """
+        outer_margins = self._outer_layout.contentsMargins()
+        available = max(80, width - outer_margins.left() - outer_margins.right())
+
+        bubble_width = self.message_bubble.width()
+        if bubble_width <= 1 or bubble_width > available:
+            bubble_width = min(available, max(80, self.message_bubble.sizeHint().width()))
+
+        bubble_margins = self._bubble_layout.contentsMargins()
+        label_width = max(
+            1,
+            bubble_width - bubble_margins.left() - bubble_margins.right(),
+        )
+        label_height = self.message_label.heightForWidth(label_width)
+        if label_height <= 0:
+            label_height = self.message_label.sizeHint().height()
+
+        bubble_height = (
+            bubble_margins.top()
+            + max(1, label_height)
+            + bubble_margins.bottom()
+        )
+        meta_height = max(1, self._meta_layout.sizeHint().height())
+        return max(
+            1,
+            outer_margins.top()
+            + meta_height
+            + self._outer_layout.spacing()
+            + bubble_height
+            + outer_margins.bottom(),
+        )
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
