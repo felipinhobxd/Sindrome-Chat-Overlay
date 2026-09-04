@@ -32,6 +32,7 @@ public final class ChatListView extends RecyclerView implements ChatBus.Listener
 
     public ChatListView(Context context) {
         super(context);
+        setKeepScreenOn(true);
         setClipToPadding(false);
         setPadding(dp(3), dp(3), dp(3), dp(8));
         setItemAnimator(null);

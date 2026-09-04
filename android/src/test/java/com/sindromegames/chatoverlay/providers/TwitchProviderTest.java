@@ -37,5 +37,12 @@ public final class TwitchProviderTest {
                 "@target-msg-id=gone :tmi.twitch.tv CLEARMSG #channel :removed").deleteId);
         assertTrue(TwitchProvider.parseLine(":tmi.twitch.tv RECONNECT").reconnect);
     }
-}
 
+    @Test public void heartbeatProbesThenReconnectsAStalledSocket() {
+        long lastInbound = 1_000L;
+        assertEquals(0, TwitchProvider.heartbeatAction(45_999L, lastInbound, 0L));
+        assertEquals(1, TwitchProvider.heartbeatAction(46_000L, lastInbound, 0L));
+        assertEquals(0, TwitchProvider.heartbeatAction(57_999L, lastInbound, 46_000L));
+        assertEquals(2, TwitchProvider.heartbeatAction(58_000L, lastInbound, 46_000L));
+    }
+}

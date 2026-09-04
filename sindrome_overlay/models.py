@@ -21,6 +21,7 @@ class ChatEmote:
     start: int
     end: int
     name: str
+    image_url: str = ""
 
 
 @dataclass(slots=True, frozen=True)

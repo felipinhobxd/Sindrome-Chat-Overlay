@@ -104,7 +104,7 @@ public final class ChatMessageView extends LinearLayout {
                 .getDisplayMetrics().scaledDensity * 1.35f));
         for (ChatEmote emote : message.emotes) {
             if (emote.start < 0 || emote.end > output.length() || emote.start >= emote.end) continue;
-            Bitmap bitmap = EmoteLoader.get(getContext()).cached(emote.id);
+            Bitmap bitmap = EmoteLoader.get(getContext()).cached(emote);
             if (bitmap != null) {
                 BitmapDrawable drawable = new BitmapDrawable(getResources(), bitmap);
                 int width = Math.max(1, Math.round(imageSize * bitmap.getWidth()
@@ -113,11 +113,12 @@ public final class ChatMessageView extends LinearLayout {
                 output.setSpan(new ImageSpan(drawable, ImageSpan.ALIGN_BOTTOM), emote.start,
                         emote.end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
             } else {
-                String id = emote.id;
+                ChatEmote expectedEmote = emote;
                 ChatMessage expected = bound;
-                EmoteLoader.get(getContext()).load(id, () -> {
+                EmoteLoader.get(getContext()).load(expectedEmote, () -> {
                     if (isAttachedToWindow() && bound == expected
-                            && EmoteLoader.get(getContext()).cached(id) != null) renderBody(expected);
+                            && EmoteLoader.get(getContext()).cached(expectedEmote) != null)
+                        renderBody(expected);
                 });
             }
         }

@@ -25,6 +25,8 @@ import javax.net.ssl.SSLSocketFactory;
 
 public final class TwitchProvider extends ChatProvider {
     private static final Pattern EMOTE_RANGE = Pattern.compile("(\\d+)-(\\d+)");
+    private static final long HEARTBEAT_IDLE_MS = 45_000L;
+    private static final long HEARTBEAT_GRACE_MS = 12_000L;
     private final String channel;
     private volatile SSLSocket socket;
     private volatile BufferedWriter writer;
@@ -71,12 +73,27 @@ public final class TwitchProvider extends ChatProvider {
         send("NICK justinfan" + (10_000 + new Random().nextInt(90_000)));
         send("JOIN #" + channel);
         boolean announced = false;
+        long lastInbound = monotonicMs();
+        long heartbeatSent = 0L;
         try {
             while (!stopped.get()) {
                 String line;
-                try { line = reader.readLine(); }
-                catch (SocketTimeoutException ignored) { continue; }
+                try {
+                    line = reader.readLine();
+                } catch (SocketTimeoutException ignored) {
+                    long now = monotonicMs();
+                    int heartbeat = heartbeatAction(now, lastInbound, heartbeatSent);
+                    if (heartbeat == 1) {
+                        send("PING :sindrome-overlay");
+                        heartbeatSent = now;
+                    } else if (heartbeat == 2) {
+                        throw new IOException("Twitch heartbeat timed out");
+                    }
+                    continue;
+                }
                 if (line == null) throw new IOException("Twitch closed the connection");
+                lastInbound = monotonicMs();
+                heartbeatSent = 0L;
                 ParsedLine parsed = parseLine(line);
                 if (parsed.ping != null) send("PONG " + parsed.ping);
                 if (parsed.reconnect) throw new IOException("Twitch requested reconnection");
@@ -97,6 +114,16 @@ public final class TwitchProvider extends ChatProvider {
         } finally {
             closeSocket();
         }
+    }
+
+    static int heartbeatAction(long now, long lastInbound, long heartbeatSent) {
+        if (heartbeatSent > 0L)
+            return now - heartbeatSent >= HEARTBEAT_GRACE_MS ? 2 : 0;
+        return now - lastInbound >= HEARTBEAT_IDLE_MS ? 1 : 0;
+    }
+
+    private static long monotonicMs() {
+        return System.nanoTime() / 1_000_000L;
     }
 
     private synchronized void send(String line) throws IOException {

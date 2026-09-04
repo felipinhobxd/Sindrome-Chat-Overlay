@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import logging
 import os
@@ -51,9 +52,29 @@ class TwitchAssetCache(QObject):
             self.cache_dir.mkdir(parents=True, exist_ok=True)
             self._prune_disk_cache()
         except OSError as exc:
-            self.log.debug("Unable to prepare the Twitch asset cache: %s", exc)
+            self.log.debug("Unable to prepare the chat asset cache: %s", exc)
 
-    def emote_source(self, emote_id: str) -> str:
+    def emote_source(self, emote_id: str, image_url: str = "") -> str:
+        if image_url:
+            normalized_url = self._normalize_image_url(image_url)
+            if not emote_id or not self._is_trusted_image_url(normalized_url):
+                return ""
+            digest = hashlib.sha256(normalized_url.encode("utf-8")).hexdigest()
+            asset_key = f"youtube-emote:{digest}"
+            path = self.cache_dir / f"youtube-emote-{digest}.png"
+            source = self._cached_source(asset_key, path)
+            if source:
+                return source
+            if self._may_retry(asset_key):
+                self._start_image_download(
+                    asset_key,
+                    normalized_url,
+                    path,
+                    "emote",
+                    emote_id,
+                )
+            return ""
+
         if not _SAFE_ID.fullmatch(emote_id):
             return ""
         asset_key = f"emote:{emote_id}"
@@ -152,7 +173,7 @@ class TwitchAssetCache(QObject):
             elif kind == "badge_manifest":
                 self._manifest_download_finished(reply)
         except Exception as exc:  # noqa: BLE001 - Qt network callback boundary
-            self.log.debug("Unable to process a Twitch asset response: %s", exc)
+            self.log.debug("Unable to process a chat asset response: %s", exc)
         finally:
             reply.deleteLater()
             self._start_queued_downloads()
@@ -171,8 +192,8 @@ class TwitchAssetCache(QObject):
             self._mark_failed(asset_key, "image exceeds the 2 MB limit")
             return
         image = QImage.fromData(data)
-        if image.isNull():
-            self._mark_failed(asset_key, "invalid image data")
+        if image.isNull() or image.width() > 1024 or image.height() > 1024 or image.width() * image.height() > 1_048_576:
+            self._mark_failed(asset_key, "invalid or oversized image data")
             return
 
         path = Path(str(reply.property("cache_path") or ""))
@@ -191,7 +212,7 @@ class TwitchAssetCache(QObject):
             self._memory_sources.move_to_end(asset_key)
             while len(self._memory_sources) > _MAX_MEMORY_IMAGES:
                 self._memory_sources.popitem(last=False)
-            self.log.debug("Unable to persist Twitch asset %s: %s", asset_key, exc)
+            self.log.debug("Unable to persist chat asset %s: %s", asset_key, exc)
 
         self._retry_after.pop(asset_key, None)
         if asset_type == "emote":
@@ -266,6 +287,11 @@ class TwitchAssetCache(QObject):
         )
 
     @staticmethod
+    def _normalize_image_url(url: str) -> str:
+        value = url.strip()
+        return f"https:{value}" if value.startswith("//") else value
+
+    @staticmethod
     def _is_trusted_image_url(url: str) -> bool:
         parsed = QUrl(url)
         host = parsed.host().lower()
@@ -273,6 +299,8 @@ class TwitchAssetCache(QObject):
             host == "static-cdn.jtvnw.net"
             or host == "badges.twitch.tv"
             or host.endswith(".twitch.tv")
+            or host.endswith(".ggpht.com")
+            or host.endswith(".googleusercontent.com")
         )
 
     def _cached_source(self, asset_key: str, path: Path) -> str:
@@ -293,7 +321,7 @@ class TwitchAssetCache(QObject):
         if not asset_key:
             return
         self._remember_retry(asset_key, 300)
-        self.log.debug("Unable to download Twitch asset %s: %s", asset_key, reason)
+        self.log.debug("Unable to download chat asset %s: %s", asset_key, reason)
 
     def _remember_retry(self, asset_key: str, delay_seconds: float) -> None:
         if len(self._retry_after) >= _MAX_RETRY_ENTRIES and asset_key not in self._retry_after:
