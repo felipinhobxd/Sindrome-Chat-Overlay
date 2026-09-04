@@ -36,6 +36,26 @@ _TEXT: dict[str, dict[str, str]] = {
         "diagnostic_saved_message": "Diagnostic package saved to:\n{path}",
         "diagnostic_failed_title": "Could not export diagnostic",
         "diagnostic_failed_message": "The diagnostic package could not be created.\n\n{error}",
+        "obs_source": "OBS source",
+        "obs_source_help": (
+            "Adds a local Browser Source for OBS. It shows only Twitch + YouTube chat, has no "
+            "audio of its own and keeps messages until the OBS history limit is reached. The "
+            "source is available only on this PC (127.0.0.1)."
+        ),
+        "obs_enable": "Enable OBS browser source",
+        "obs_url": "Browser Source URL:",
+        "obs_copy_url": "Copy URL",
+        "obs_open_test": "Open test page",
+        "obs_port": "Local port:",
+        "obs_max_messages": "Messages kept:",
+        "obs_font_size": "Font size:",
+        "obs_background": "Message background opacity:",
+        "obs_show_platform": "Show Twitch / YouTube label",
+        "obs_show_badges": "Show badges",
+        "obs_show_timestamps": "Show timestamps",
+        "obs_restart_note": "Port changes take effect after saving settings.",
+        "obs_copy_success": "OBS URL copied to the clipboard.",
+        "obs_unavailable": "OBS source is disabled. Enable it and save settings first.",
     },
     "pt-BR": {
         "profiles": "Perfis de Overlay",
@@ -71,6 +91,26 @@ _TEXT: dict[str, dict[str, str]] = {
         "diagnostic_saved_message": "Pacote de diagnóstico salvo em:\n{path}",
         "diagnostic_failed_title": "Não foi possível exportar o diagnóstico",
         "diagnostic_failed_message": "O pacote de diagnóstico não pôde ser criado.\n\n{error}",
+        "obs_source": "Fonte OBS",
+        "obs_source_help": (
+            "Cria uma Fonte do Navegador local para o OBS. Ela mostra somente o chat da Twitch + "
+            "YouTube, não possui áudio próprio e mantém as mensagens até atingir o limite do "
+            "histórico do OBS. A fonte só fica disponível neste PC (127.0.0.1)."
+        ),
+        "obs_enable": "Ativar fonte de navegador para OBS",
+        "obs_url": "URL da Fonte do Navegador:",
+        "obs_copy_url": "Copiar URL",
+        "obs_open_test": "Abrir página de teste",
+        "obs_port": "Porta local:",
+        "obs_max_messages": "Mensagens mantidas:",
+        "obs_font_size": "Tamanho da fonte:",
+        "obs_background": "Opacidade do fundo da mensagem:",
+        "obs_show_platform": "Mostrar Twitch / YouTube",
+        "obs_show_badges": "Mostrar badges",
+        "obs_show_timestamps": "Mostrar horário",
+        "obs_restart_note": "Alterações de porta entram em vigor após salvar as configurações.",
+        "obs_copy_success": "URL do OBS copiada para a área de transferência.",
+        "obs_unavailable": "A fonte OBS está desativada. Ative e salve as configurações primeiro.",
     },
 }
 
