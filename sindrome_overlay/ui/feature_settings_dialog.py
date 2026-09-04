@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 
 from ..feature_i18n import feature_tr
 from ..profiles import (
+    MAX_CUSTOM_PROFILES,
     capture_overlay_profile,
     iter_profile_choices,
     normalize_custom_profiles,
@@ -200,6 +201,13 @@ class SettingsDialog(_BaseSettingsDialog):
                 self._feature_text("profile_invalid_name"),
             )
             return
+        if normalized not in self._profiles and len(self._profiles) >= MAX_CUSTOM_PROFILES:
+            QMessageBox.warning(
+                self,
+                self._feature_text("profile_name_title"),
+                self._feature_text("profile_limit", count=MAX_CUSTOM_PROFILES),
+            )
+            return
         if normalized in self._profiles:
             choice = QMessageBox.question(
                 self,
@@ -215,6 +223,8 @@ class SettingsDialog(_BaseSettingsDialog):
     def _save_profile_named(self, name: str) -> bool:
         normalized = normalize_profile_name(name)
         if not normalized:
+            return False
+        if normalized not in self._profiles and len(self._profiles) >= MAX_CUSTOM_PROFILES:
             return False
         current = replace(self._current)
         current.always_on_top = self.always_on_top.isChecked()
