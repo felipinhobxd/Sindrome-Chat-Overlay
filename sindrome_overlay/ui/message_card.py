@@ -209,13 +209,13 @@ class MessageCard(QFrame):
         outer.addWidget(self.message_bubble, 0, Qt.AlignLeft)
 
     def required_height_for_width(self, width: int) -> int:
-        """Return the unclipped card height for the current wrapped bubble width.
+        """Measure and apply the unclipped height for the current wrapped bubble.
 
         QLabel.sizeHint() is not reliable for a word-wrapped label whose parent is
         deliberately compact. The virtualized list used that hint and could reserve
         only two lines even though the actual bubble wrapped to three or more. Measure
-        the label with Qt's height-for-width API instead, using the bubble width the
-        layout really selected.
+        with Qt's height-for-width API and apply those minimum heights before the list
+        caches the row geometry.
         """
         outer_margins = self._outer_layout.contentsMargins()
         available = max(80, width - outer_margins.left() - outer_margins.right())
@@ -232,12 +232,22 @@ class MessageCard(QFrame):
         label_height = self.message_label.heightForWidth(label_width)
         if label_height <= 0:
             label_height = self.message_label.sizeHint().height()
+        label_height = max(1, label_height)
 
         bubble_height = (
             bubble_margins.top()
-            + max(1, label_height)
+            + label_height
             + bubble_margins.bottom()
         )
+
+        # The row may become taller while the compact bubble keeps its stale short
+        # size hint. Explicitly update the child minimums so the extra row height is
+        # actually used by the wrapped text instead of becoming blank space below it.
+        self.message_label.setMinimumHeight(label_height)
+        self.message_bubble.setMinimumHeight(bubble_height)
+        self.message_label.updateGeometry()
+        self.message_bubble.updateGeometry()
+
         meta_height = max(1, self._meta_layout.sizeHint().height())
         return max(
             1,
