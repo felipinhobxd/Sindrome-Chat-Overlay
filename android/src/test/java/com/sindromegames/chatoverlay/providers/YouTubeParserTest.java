@@ -35,4 +35,22 @@ public final class YouTubeParserTest {
         assertEquals("Olá 😀", message.text);
         assertEquals(List.of("OWNER"), message.badges);
     }
+
+    @Test public void parsesYouTubeCustomEmojiWithImageAndStableSpan() throws Exception {
+        JSONObject item = new JSONObject("{\"liveChatTextMessageRenderer\":{"
+                + "\"id\":\"yt-emote\",\"authorName\":{\"simpleText\":\"Maria\"},"
+                + "\"message\":{\"runs\":[{\"text\":\"Oi \"},{\"emoji\":{"
+                + "\"emojiId\":\"UC-custom-1\",\"shortcuts\":[\":sindrome:\"],"
+                + "\"isCustomEmoji\":true,\"image\":{\"thumbnails\":["
+                + "{\"url\":\"https://yt3.ggpht.com/small\"},"
+                + "{\"url\":\"https://yt3.ggpht.com/large\"}]}}},{\"text\":\"!\"}]}}}}" );
+        ChatMessage message = YouTubeProvider.compatibilityMessage(item);
+        assertNotNull(message);
+        assertEquals("Oi :sindrome:!", message.text);
+        assertEquals(1, message.emotes.size());
+        assertEquals(3, message.emotes.get(0).start);
+        assertEquals(13, message.emotes.get(0).end);
+        assertEquals(":sindrome:", message.emotes.get(0).name);
+        assertEquals("https://yt3.ggpht.com/large", message.emotes.get(0).imageUrl);
+    }
 }
