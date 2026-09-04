@@ -62,6 +62,14 @@ class Settings:
     window_y: int = 80
     window_width: int = 440
     window_height: int = 720
+    obs_enabled: bool = False
+    obs_port: int = 8765
+    obs_max_messages: int = 100
+    obs_font_size: int = 20
+    obs_show_platform_labels: bool = False
+    obs_show_badges: bool = True
+    obs_show_timestamps: bool = False
+    obs_message_background_opacity: int = 72
     overlay_profiles: dict[str, dict[str, Any]] = field(default_factory=dict)
     active_overlay_profile: str = ""
 
@@ -87,6 +95,18 @@ class Settings:
         self.sound_min_interval_ms = _clamp(self.sound_min_interval_ms, 0, 5_000)
         self.window_width = _clamp(self.window_width, 300, 2000)
         self.window_height = _clamp(self.window_height, 240, 1400)
+        self.obs_enabled = bool(self.obs_enabled)
+        self.obs_port = _clamp(self.obs_port, 1024, 65535)
+        self.obs_max_messages = _clamp(self.obs_max_messages, 20, 500)
+        self.obs_font_size = _clamp(self.obs_font_size, 11, 40)
+        self.obs_show_platform_labels = bool(self.obs_show_platform_labels)
+        self.obs_show_badges = bool(self.obs_show_badges)
+        self.obs_show_timestamps = bool(self.obs_show_timestamps)
+        self.obs_message_background_opacity = _clamp(
+            self.obs_message_background_opacity,
+            0,
+            100,
+        )
         self.overlay_profiles = normalize_custom_profiles(self.overlay_profiles)
         self.active_overlay_profile = normalize_profile_ref(
             self.active_overlay_profile,
