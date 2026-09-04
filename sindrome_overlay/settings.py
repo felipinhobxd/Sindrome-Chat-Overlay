@@ -5,11 +5,12 @@ import ctypes
 import json
 import os
 from ctypes import wintypes
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
 from .i18n import normalize_language
+from .profiles import normalize_custom_profiles, normalize_profile_ref
 from .sounds import DEFAULT_TWITCH_SOUND, DEFAULT_YOUTUBE_SOUND, normalize_sound_id
 from .url_utils import normalize_twitch_channel, normalize_youtube_input
 
@@ -61,6 +62,8 @@ class Settings:
     window_y: int = 80
     window_width: int = 440
     window_height: int = 720
+    overlay_profiles: dict[str, dict[str, Any]] = field(default_factory=dict)
+    active_overlay_profile: str = ""
 
     def normalized(self) -> Settings:
         self.language = normalize_language(self.language)
@@ -84,6 +87,11 @@ class Settings:
         self.sound_min_interval_ms = _clamp(self.sound_min_interval_ms, 0, 5_000)
         self.window_width = _clamp(self.window_width, 300, 2000)
         self.window_height = _clamp(self.window_height, 240, 1400)
+        self.overlay_profiles = normalize_custom_profiles(self.overlay_profiles)
+        self.active_overlay_profile = normalize_profile_ref(
+            self.active_overlay_profile,
+            self.overlay_profiles,
+        )
         return self
 
 
