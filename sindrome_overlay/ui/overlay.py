@@ -20,6 +20,7 @@ from PySide6.QtGui import (
     QShowEvent,
 )
 from PySide6.QtWidgets import (
+    QAbstractScrollArea,
     QApplication,
     QFrame,
     QHBoxLayout,
@@ -149,6 +150,10 @@ class OverlayShell(QMainWindow):
         icon = QIcon(str(icon_path))
         self.setWindowIcon(icon)
 
+        # Set by the subclass as soon as its scroll area exists; the eventFilter
+        # may fire during widget construction (synchronous layout events on
+        # Windows), long before the legacy `self.scroll` alias is assigned.
+        self._message_scroll: QAbstractScrollArea | None = None
         self._build_ui()
         self._build_tray(icon)
         self._retranslate_ui(reset_statuses=True)
@@ -1016,7 +1021,12 @@ class OverlayShell(QMainWindow):
                 self.activateWindow()
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
-        if watched is self.scroll.viewport() and event.type() == QEvent.MouseButtonDblClick:
+        scroll_area = self._message_scroll
+        if (
+            scroll_area is not None
+            and watched is scroll_area.viewport()
+            and event.type() == QEvent.MouseButtonDblClick
+        ):
             self.toggle_click_through()
             return True
         return super().eventFilter(watched, event)

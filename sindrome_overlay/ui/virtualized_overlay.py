@@ -87,6 +87,10 @@ class OverlayWindow(OverlayShell):
             self.message_view,
         )
         self.message_view.setItemDelegate(self.message_delegate)
+        # Register the scroll area before any event filter can fire: on Windows
+        # synchronous layout events reach eventFilter() during addWidget/show,
+        # while the legacy `self.scroll` alias is only assigned below.
+        self._message_scroll = self.message_view
         self.message_view.viewport().installEventFilter(self)
         self.message_view.verticalScrollBar().rangeChanged.connect(self._on_scroll_range_changed)
         self._scroll_update_pending = False
