@@ -1,18 +1,12 @@
 from __future__ import annotations
 
 import base64
+import math
 import time
 
-from PySide6.QtCore import Qt, QUrl
-from PySide6.QtGui import QPixmap, QResizeEvent
-from PySide6.QtWidgets import (
-    QFrame,
-    QHBoxLayout,
-    QLabel,
-    QSizePolicy,
-    QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtCore import QEvent, QRect, QSize, Qt, QUrl, Signal
+from PySide6.QtGui import QPixmap, QResizeEvent, QTextOption
+from PySide6.QtWidgets import QFrame, QLabel, QSizePolicy, QTextEdit, QWidget
 
 from ..emotes import build_message_html
 from ..i18n import tr
@@ -21,7 +15,46 @@ from ..settings import Settings
 from .twitch_assets import TwitchAssetCache
 
 
-class EmoteMessageLabel(QLabel):
+class _ElidedLabel(QLabel):
+    """A single-line label whose original text never imposes a minimum width."""
+
+    def __init__(self, text: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._full_text = ""
+        self.setTextFormat(Qt.PlainText)
+        self.setMinimumWidth(0)
+        self.set_full_text(text)
+
+    def set_full_text(self, text: str) -> None:
+        self._full_text = " ".join(text.split())
+        self.setToolTip(text)
+        self.setText(self._full_text)
+        self.updateGeometry()
+
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt API
+        hint = super().sizeHint()
+        if self.pixmap().isNull():
+            metrics = self.fontMetrics()
+            padding = max(0, hint.width() - metrics.horizontalAdvance(self.text()))
+            hint.setWidth(metrics.horizontalAdvance(self._full_text) + padding)
+        return hint
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802
+        return QSize(0, self.sizeHint().height())
+
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        if self.pixmap().isNull():
+            self.setText(self.fontMetrics().elidedText(
+                self._full_text, Qt.ElideRight, max(0, self.contentsRect().width())
+            ))
+
+
+class EmoteMessageLabel(QTextEdit):
+    """Read-only rich text measured and painted by the same wrapping document."""
+
+    layout_changed = Signal()
+
     def __init__(
         self,
         message: ChatMessage,
@@ -34,46 +67,75 @@ class EmoteMessageLabel(QLabel):
         self.asset_cache = asset_cache
         self.image_size = max(24, min(48, round(settings.font_size * 1.8)))
         self.emote_ids = {emote.emote_id for emote in message.emotes}
+        self._rendered_text = ""
         self.setObjectName("MessageText")
-        self.setWordWrap(True)
+        self.setReadOnly(True)
+        self.setUndoRedoEnabled(False)
+        self.setFrameShape(QFrame.NoFrame)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self.setAlignment(Qt.AlignLeft | Qt.AlignTop)
-        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+        self.setFocusPolicy(Qt.NoFocus)
+        self.setWordWrapMode(QTextOption.WrapAtWordBoundaryOrAnywhere)
+        self.document().setDocumentMargin(0)
+        self.setStyleSheet("background: transparent; color: #F5F7FB; border: none; padding: 0;")
+        self.viewport().setAutoFillBackground(False)
+        policy = QSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+        policy.setHeightForWidth(True)
+        self.setSizePolicy(policy)
         if self.asset_cache is not None and self.emote_ids:
             self.asset_cache.emote_ready.connect(self._emote_ready)
         self._render()
 
+    def text(self) -> str:
+        return self._rendered_text
+
+    def natural_width(self) -> int:
+        self.document().setDefaultFont(self.font())
+        self.document().setTextWidth(-1)
+        return max(1, math.ceil(self.document().idealWidth()))
+
+    def heightForWidth(self, width: int) -> int:  # noqa: N802
+        self.document().setDefaultFont(self.font())
+        self.document().setTextWidth(max(1, width))
+        return max(1, math.ceil(self.document().size().height()))
+
+    def sizeHint(self) -> QSize:  # noqa: N802
+        width = min(320, self.natural_width())
+        return QSize(width, self.heightForWidth(width))
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802
+        return QSize(0, 0)
+
     def _render(self) -> None:
         if self.asset_cache is None or not self.message.emotes:
-            self.setTextFormat(Qt.PlainText)
-            self.setText(self.message.text)
-            return
-        sources: dict[str, str] = {}
-        for emote in self.message.emotes:
-            source = (
-                self.asset_cache.emote_source(emote.emote_id, emote.image_url)
-                if emote.image_url
-                else self.asset_cache.emote_source(emote.emote_id)
+            self._rendered_text = self.message.text
+            self.setPlainText(self._rendered_text)
+        else:
+            sources: dict[str, str] = {}
+            for emote in self.message.emotes:
+                source = (
+                    self.asset_cache.emote_source(emote.emote_id, emote.image_url)
+                    if emote.image_url
+                    else self.asset_cache.emote_source(emote.emote_id)
+                )
+                if source:
+                    sources[emote.emote_id] = source
+            self._rendered_text = build_message_html(
+                self.message.text, self.message.emotes, sources, self.image_size,
             )
-            if source:
-                sources[emote.emote_id] = source
-        self.setTextFormat(Qt.RichText)
-        self.setText(
-            build_message_html(
-                self.message.text,
-                self.message.emotes,
-                sources,
-                self.image_size,
-            )
-        )
+            self.setHtml(self._rendered_text)
         self.updateGeometry()
+        self.layout_changed.emit()
 
     def _emote_ready(self, emote_id: str) -> None:
         if emote_id in self.emote_ids:
             self._render()
 
 
-class TwitchBadgeLabel(QLabel):
+class TwitchBadgeLabel(_ElidedLabel):
+    layout_changed = Signal()
+
     def __init__(
         self,
         badge: ChatBadge,
@@ -82,13 +144,12 @@ class TwitchBadgeLabel(QLabel):
         asset_cache: TwitchAssetCache,
         parent: QWidget | None = None,
     ) -> None:
-        super().__init__(parent)
+        super().__init__(parent=parent)
         self.badge = badge
         self.fallback_text = fallback_text
         self.language = settings.language
         self.image_height = max(18, min(32, round(settings.font_size * 1.25)))
         self.asset_cache = asset_cache
-        self.setToolTip(fallback_text)
         self.setAlignment(Qt.AlignCenter)
         self.asset_cache.badge_ready.connect(self._render)
         self._render()
@@ -97,26 +158,29 @@ class TwitchBadgeLabel(QLabel):
         source = self.asset_cache.badge_source(self.badge)
         pixmap = _pixmap_from_source(source)
         if not pixmap.isNull():
-            scaled = pixmap.scaledToHeight(self.image_height, Qt.SmoothTransformation)
+            scaled = pixmap.scaled(
+                self.image_height, self.image_height, Qt.KeepAspectRatio, Qt.SmoothTransformation,
+            )
             self.setObjectName("TwitchBadgeImage")
             self.setStyleSheet("background: transparent;")
             self.setText("")
             self.setPixmap(scaled)
-            self.setFixedSize(scaled.size())
-            return
-
-        self.setPixmap(QPixmap())
-        self.setObjectName("MetaText")
-        self.setText(_short_badge(self.fallback_text, self.language))
-        self.setStyleSheet(
-            "background: rgba(255,255,255,26); border-radius: 4px; "
-            "padding: 1px 4px; font-weight: 700;"
-        )
-        self.setMinimumSize(0, 0)
-        self.setMaximumSize(16_777_215, 16_777_215)
+        else:
+            self.setPixmap(QPixmap())
+            self.setObjectName("MetaText")
+            self.set_full_text(_short_badge(self.fallback_text, self.language))
+            self.setStyleSheet(
+                "background: rgba(255,255,255,26); border-radius: 4px; "
+                "padding: 1px 4px; font-weight: 700;"
+            )
+        self.setToolTip(self.fallback_text)
+        self.updateGeometry()
+        self.layout_changed.emit()
 
 
 class MessageCard(QFrame):
+    layout_changed = Signal()
+
     def __init__(
         self,
         message: ChatMessage,
@@ -128,141 +192,128 @@ class MessageCard(QFrame):
         self.message = message
         self.created_monotonic = time.monotonic()
         self.setObjectName("ChatCard")
+        policy = QSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+        policy.setHeightForWidth(True)
+        self.setSizePolicy(policy)
+        self._meta_labels: list[QLabel] = []
         accent = "#9146FF" if message.platform == "twitch" else "#FF4057"
         if message.kind in {"paid", "bits"}:
             accent = "#F6B73C"
         elif message.kind in {"membership", "event"}:
             accent = "#48D597"
 
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(3, 2, 3, 3)
-        outer.setSpacing(2)
-        self._outer_layout = outer
-
-        meta = QHBoxLayout()
-        meta.setSpacing(6)
-        self._meta_layout = meta
         if settings.show_platform_labels:
-            platform = QLabel("TWITCH" if message.platform == "twitch" else "YOUTUBE")
+            platform = _ElidedLabel("TWITCH" if message.platform == "twitch" else "YOUTUBE", self)
             platform.setObjectName("MetaText")
             platform.setStyleSheet(f"color: {accent}; font-weight: 800; letter-spacing: 0.4px;")
-            meta.addWidget(platform)
+            self._meta_labels.append(platform)
 
         if message.badge_refs and asset_cache is not None:
             for index, badge_ref in enumerate(message.badge_refs[:3]):
                 fallback = (
-                    message.badges[index]
-                    if index < len(message.badges)
-                    else badge_ref.set_id.upper()
+                    message.badges[index] if index < len(message.badges) else badge_ref.set_id.upper()
                 )
-                meta.addWidget(TwitchBadgeLabel(badge_ref, fallback, settings, asset_cache, self))
-
-        author = QLabel(message.author)
-        author.setObjectName("AuthorName")
-        author.setStyleSheet(
-            f"color: {message.safe_author_colour}; font-weight: 700; background: transparent;"
-        )
-        author.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        meta.addWidget(author)
-
-        if not message.badge_refs or asset_cache is None:
+                badge = TwitchBadgeLabel(badge_ref, fallback, settings, asset_cache, self)
+                badge.layout_changed.connect(self._content_changed)
+                self._meta_labels.append(badge)
+        else:
             for badge_text in message.badges[:3]:
-                badge = QLabel(_short_badge(badge_text, settings.language))
+                badge = _ElidedLabel(_short_badge(badge_text, settings.language), self)
                 badge.setObjectName("MetaText")
                 badge.setStyleSheet(
                     "background: rgba(255,255,255,26); border-radius: 4px; "
                     "padding: 1px 4px; font-weight: 700;"
                 )
                 badge.setToolTip(badge_text)
-                meta.addWidget(badge)
+                self._meta_labels.append(badge)
+
+        self.author_label = _ElidedLabel(message.author, self)
+        self.author_label.setObjectName("AuthorName")
+        self.author_label.setStyleSheet(
+            f"color: {message.safe_author_colour}; font-weight: 700; background: transparent;"
+        )
+        self.author_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self._meta_labels.append(self.author_label)
 
         if message.amount:
-            amount = QLabel(message.amount)
+            amount = _ElidedLabel(message.amount, self)
+            amount.setObjectName("MessageAmount")
             amount.setStyleSheet(
                 "color: #17120A; background: #F6B73C; border-radius: 5px; "
                 "padding: 2px 6px; font-weight: 800;"
             )
-            meta.addWidget(amount)
-
-        meta.addStretch(1)
+            self._meta_labels.append(amount)
         if settings.show_timestamps:
-            timestamp = QLabel(message.timestamp.astimezone().strftime("%H:%M"))
+            timestamp = _ElidedLabel(message.timestamp.astimezone().strftime("%H:%M"), self)
             timestamp.setObjectName("MetaText")
-            meta.addWidget(timestamp)
-        outer.addLayout(meta)
+            self._meta_labels.append(timestamp)
 
         self.message_bubble = QFrame(self)
         self.message_bubble.setObjectName("MessageBubble")
-        self.message_bubble.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
-        self.message_bubble.setMaximumWidth(max(80, settings.window_width - 30))
-        bubble_layout = QHBoxLayout(self.message_bubble)
-        bubble_layout.setContentsMargins(7, 3, 7, 4)
-        bubble_layout.setSpacing(0)
-        self._bubble_layout = bubble_layout
-        self.message_label = EmoteMessageLabel(
-            message,
-            settings,
-            asset_cache,
-            self.message_bubble,
-        )
-        bubble_layout.addWidget(self.message_label)
-        outer.addWidget(self.message_bubble, 0, Qt.AlignLeft)
+        self.message_label = EmoteMessageLabel(message, settings, asset_cache, self.message_bubble)
+        self.message_label.layout_changed.connect(self._content_changed)
+
+    def _arrange(self, width: int, *, apply: bool = False) -> int:
+        """One width-based calculation for row measurement and child placement.
+
+        No previous geometry, minimumHeight or sizeHint from a wrapped parent can
+        feed back into this calculation. Metadata flows before the body, and only
+        the author may use a shortened width to share the remaining line.
+        """
+        available = max(1, width - 6)
+        x, y, line_height = 0, 2, 0
+        for label in self._meta_labels:
+            label.ensurePolished()
+            hint = label.sizeHint()
+            item_width = min(available, max(1, hint.width()))
+            if label is self.author_label:
+                # Keep room for useful identifying characters when sharing a row.
+                readable = min(item_width, label.fontMetrics().horizontalAdvance("MMMM"))
+                if available - x >= readable:
+                    item_width = min(item_width, available - x)
+            if x and x + item_width > available:
+                x, y, line_height = 0, y + line_height + 2, 0
+            if apply:
+                label.setGeometry(3 + x, y, item_width, hint.height())
+            x += item_width + 6
+            line_height = max(line_height, hint.height())
+        body_y = y + line_height + 2
+        self.message_label.ensurePolished()
+        text_width = min(max(1, available - 14), self.message_label.natural_width())
+        text_height = self.message_label.heightForWidth(text_width)
+        if apply:
+            self.message_bubble.setGeometry(3, body_y, text_width + 14, text_height + 7)
+            self.message_label.setGeometry(7, 3, text_width, text_height)
+            # QTextEdit's viewport resize can relayout its document; keep it at the
+            # exact width used above, including when only the row height changed.
+            self.message_label.document().setTextWidth(text_width)
+        return body_y + text_height + 7 + 3
 
     def required_height_for_width(self, width: int) -> int:
-        """Measure and apply the unclipped height for the current wrapped bubble.
+        return self._arrange(width)
 
-        QLabel.sizeHint() is not reliable for a word-wrapped label whose parent is
-        deliberately compact. The virtualized list used that hint and could reserve
-        only two lines even though the actual bubble wrapped to three or more. Measure
-        with Qt's height-for-width API and apply those minimum heights before the list
-        caches the row geometry.
-        """
-        outer_margins = self._outer_layout.contentsMargins()
-        available = max(80, width - outer_margins.left() - outer_margins.right())
+    def heightForWidth(self, width: int) -> int:  # noqa: N802
+        return self.required_height_for_width(width)
 
-        bubble_width = self.message_bubble.width()
-        if bubble_width <= 1 or bubble_width > available:
-            bubble_width = min(available, max(80, self.message_bubble.sizeHint().width()))
+    def sizeHint(self) -> QSize:  # noqa: N802
+        return QSize(320, self.required_height_for_width(320))
 
-        bubble_margins = self._bubble_layout.contentsMargins()
-        label_width = max(
-            1,
-            bubble_width - bubble_margins.left() - bubble_margins.right(),
-        )
-        label_height = self.message_label.heightForWidth(label_width)
-        if label_height <= 0:
-            label_height = self.message_label.sizeHint().height()
-        label_height = max(1, label_height)
+    def minimumSizeHint(self) -> QSize:  # noqa: N802
+        return QSize(0, 0)
 
-        bubble_height = (
-            bubble_margins.top()
-            + label_height
-            + bubble_margins.bottom()
-        )
+    def _content_changed(self) -> None:
+        self._arrange(self.width(), apply=True)
+        self.updateGeometry()
+        self.layout_changed.emit()
 
-        # The row may become taller while the compact bubble keeps its stale short
-        # size hint. Explicitly update the child minimums so the extra row height is
-        # actually used by the wrapped text instead of becoming blank space below it.
-        self.message_label.setMinimumHeight(label_height)
-        self.message_bubble.setMinimumHeight(bubble_height)
-        self.message_label.updateGeometry()
-        self.message_bubble.updateGeometry()
+    def changeEvent(self, event: QEvent) -> None:  # noqa: N802
+        super().changeEvent(event)
+        if event.type() in (QEvent.FontChange, QEvent.StyleChange) and hasattr(self, "message_label"):
+            self._content_changed()
 
-        meta_height = max(1, self._meta_layout.sizeHint().height())
-        return max(
-            1,
-            outer_margins.top()
-            + meta_height
-            + self._outer_layout.spacing()
-            + bubble_height
-            + outer_margins.bottom(),
-        )
-
-    def resizeEvent(self, event: QResizeEvent) -> None:
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
         super().resizeEvent(event)
-        margins = self._outer_layout.contentsMargins()
-        available = event.size().width() - margins.left() - margins.right()
-        self.message_bubble.setMaximumWidth(max(80, available))
+        self._arrange(event.size().width(), apply=True)
 
 
 def _pixmap_from_source(source: str) -> QPixmap:
