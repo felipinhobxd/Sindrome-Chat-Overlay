@@ -22,6 +22,11 @@ android {
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
+
+        // Ship only the locales the app actually provides (values/ + values-pt-rBR/);
+        // strips every other translation bundled by AndroidX/Material libraries.
+        // (resourceConfigurations == localeFilters from AGP 9 onwards)
+        resourceConfigurations.addAll("en", "pt-rBR")
     }
 
     if (hasReleaseSigning) {
@@ -57,10 +62,6 @@ android {
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
-    }
-
-    testOptions {
-        unitTests.returnDefaultValues = true
     }
 
     lint {
