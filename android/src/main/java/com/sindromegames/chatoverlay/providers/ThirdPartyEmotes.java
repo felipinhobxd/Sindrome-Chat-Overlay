@@ -242,6 +242,11 @@ public final class ThirdPartyEmotes {
         return matches;
     }
 
+    /** Test-only: injects a catalog without network access. */
+    void forceCatalogForTest(Map<String, String> catalog) {
+        codes = new LinkedHashMap<>(catalog);
+    }
+
     /** Returns a copy of the message with third-party emotes appended. */
     public ChatMessage augment(ChatMessage message) {
         Map<String, String> current = codes;
