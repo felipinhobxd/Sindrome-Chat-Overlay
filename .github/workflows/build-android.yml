@@ -176,14 +176,35 @@ jobs:
           gradle-version: "8.10.2"
           cache-provider: basic
 
+      - name: Verify hardware acceleration is available
+        # Fail fast with a clear message instead of a slow software-emulation
+        # hang: ddmlib reports a missing /dev/kvm as opaque shell timeouts.
+        run: ls -la /dev/kvm
+
       - name: Run instrumented tests on an emulator
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.34.0
         with:
           api-level: 30
+          # google_apis is the battle-tested CI image; the AOSP "default"
+          # image for API 30 hangs its shell on hosted runners and the run
+          # dies with ShellCommandUnresponsiveException before any test.
+          target: google_apis
           arch: x86_64
+          disable-animations: true
+          emulator-boot-timeout: 600
           script: |
             adb shell appops set com.sindromegames.chatoverlay SYSTEM_ALERT_WINDOW allow || true
             gradle :android:connectedDebugAndroidTest --stacktrace
+
+      - name: Upload instrumented test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: android-instrumented-test-reports
+          path: |
+            android/build/reports/androidTests/
+            android/build/outputs/androidTest-results/
+          if-no-files-found: ignore
 
   publish-android:
     needs: build-android

@@ -6,6 +6,18 @@ section below is copied verbatim into the matching GitHub Release by the
 build workflow, so keep one `## [x.y.z] - YYYY-MM-DD` section per version
 and add the section **before** publishing the version bump.
 
+## [Unreleased]
+
+### Internal
+
+- CI: the instrumented-test job boots a `google_apis` API 30 emulator with
+  animations disabled, a 10-minute boot timeout, a `/dev/kvm` fail-fast check
+  and test-report upload on failure; the previous AOSP image hung its shell
+  before any test could run.
+- Overlay window instrumented tests proxy window mutations to the main thread
+  (`runOnMainSync`), because `WindowManager.addView` requires a Looper that
+  the instrumentation thread does not have.
+
 ## [1.9.0] - 2026-09-07
 
 ### Desktop
