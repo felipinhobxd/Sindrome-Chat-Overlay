@@ -872,22 +872,46 @@ class OverlayWindow(QMainWindow):
     def open_settings(self) -> None:
         if self.settings.click_through:
             self.set_click_through(False)
+        self._before_settings_dialog()
         dialog = SettingsDialog(
             self.settings,
             self,
             youtube_connection_mode=self.youtube_connection_mode,
+            **self._settings_dialog_extras(),
         )
+        self._connect_settings_dialog(dialog)
         dialog.setStyleSheet(build_stylesheet(self.settings))
         if dialog.exec() != SettingsDialog.Accepted:
             return
         self._remember_geometry()
         updated = dialog.settings()
+        self._apply_settings(updated)
+
+    # --- Settings-flow hooks (overridden by the virtualized overlay) -------
+
+    def _before_settings_dialog(self) -> None:
+        return
+
+    def _settings_dialog_extras(self) -> dict:
+        return {}
+
+    def _connect_settings_dialog(self, dialog: SettingsDialog) -> None:
+        return
+
+    def _apply_settings(self, updated: Settings) -> None:
+        """Single accepted-settings pipeline shared by both overlays."""
+        # _remember_geometry stored the current window geometry on
+        # self.settings right before this call; both overlays want the dialog
+        # result combined with that geometry.
         updated.window_x = self.settings.window_x
         updated.window_y = self.settings.window_y
         updated.window_width = self.settings.window_width
         updated.window_height = self.settings.window_height
         self.settings = updated
-        self.store.save(self.settings)
+        try:
+            self.store.save(self.settings)
+        except (OSError, ValueError) as exc:
+            self.log.warning("Unable to save settings: %s", exc)
         self.notification_sounds.reset_limit()
         if not self.settings.check_for_updates:
             self._stop_update_checker()
@@ -899,6 +923,10 @@ class OverlayWindow(QMainWindow):
         self._rebuild_cards()
         self._restart_providers()
         self.set_click_through(self.settings.click_through)
+        self._settings_applied()
+
+    def _settings_applied(self) -> None:
+        return
 
     def _settings_from_tray(self) -> None:
         if not self.isVisible():

@@ -193,38 +193,22 @@ class OverlayWindow(_LegacyOverlayWindow):
         self._rebuild_cards()
         self._refresh_profile_menu()
 
-    def open_settings(self) -> None:
-        if self.settings.click_through:
-            self.set_click_through(False)
+    def _before_settings_dialog(self) -> None:
         # Capture the actual current window geometry before a custom profile can be saved.
         self._remember_geometry()
-        dialog = SettingsDialog(
-            self.settings,
-            self,
-            youtube_connection_mode=self.youtube_connection_mode,
-            obs_source_url=self.obs_source.url if self.obs_source.running else "",
-        )
-        dialog.diagnostics_requested.connect(lambda: self._export_diagnostics(dialog))
-        dialog.setStyleSheet(build_stylesheet(self.settings))
-        if dialog.exec() != SettingsDialog.Accepted:
-            return
 
-        updated = dialog.settings()
-        self.settings = updated
-        self.store.save(self.settings)
+    def _settings_dialog_extras(self) -> dict:
+        return {"obs_source_url": self.obs_source.url if self.obs_source.running else ""}
+
+    def _connect_settings_dialog(self, dialog: SettingsDialog) -> None:
+        dialog.diagnostics_requested.connect(lambda: self._export_diagnostics(dialog))
+
+    def _settings_applied(self) -> None:
+        # Runs after _rebuild_cards, so the OBS history is seeded from the
+        # already-filtered message list instead of publishing rows the desktop
+        # filtered away.
         self._sync_obs_source(seed_history=True)
-        self.notification_sounds.reset_limit()
-        if not self.settings.check_for_updates:
-            self._stop_update_checker()
-        else:
-            self._start_update_check()
         self._restore_geometry()
-        self._apply_window_flags()
-        self._apply_visual_settings()
-        self._retranslate_ui(reset_statuses=True)
-        self._rebuild_cards()
-        self._restart_providers()
-        self.set_click_through(self.settings.click_through)
         self._refresh_profile_menu()
 
     def _export_diagnostics(self, parent=None) -> None:
