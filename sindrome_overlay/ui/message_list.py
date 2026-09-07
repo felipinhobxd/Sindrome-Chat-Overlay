@@ -144,6 +144,7 @@ class MessageCardDelegate(QStyledItemDelegate):
         self.asset_cache = asset_cache
         self._height_cache: dict[tuple[str, int, tuple[object, ...]], int] = {}
         self._cached_widths: list[int] = []
+        self._asset_refresh_pending = False
         if asset_cache is not None:
             asset_cache.emote_ready.connect(self._asset_layout_changed)
             asset_cache.badge_ready.connect(self._asset_layout_changed)
@@ -335,6 +336,15 @@ class MessageCardDelegate(QStyledItemDelegate):
         self.sizeHintChanged.emit(model.index(persistent.row(), persistent.column()))
 
     def _asset_layout_changed(self, *_args) -> None:
+        # A burst of asset downloads must clear the height cache and relayout
+        # once per event-loop iteration, not once per image.
+        if self._asset_refresh_pending:
+            return
+        self._asset_refresh_pending = True
+        QTimer.singleShot(0, self._flush_asset_refresh)
+
+    def _flush_asset_refresh(self) -> None:
+        self._asset_refresh_pending = False
         self.invalidate_height_cache()
         view = self.parent()
         if isinstance(view, VirtualMessageListView):

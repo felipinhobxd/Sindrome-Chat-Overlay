@@ -4,7 +4,7 @@ import base64
 import math
 import time
 
-from PySide6.QtCore import QEvent, QRect, QSize, Qt, QUrl, Signal
+from PySide6.QtCore import QEvent, QRect, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QPixmap, QResizeEvent, QTextOption
 from PySide6.QtWidgets import QFrame, QLabel, QSizePolicy, QTextEdit, QWidget
 
@@ -68,6 +68,7 @@ class EmoteMessageLabel(QTextEdit):
         self.image_size = max(24, min(48, round(settings.font_size * 1.8)))
         self.emote_ids = {emote.emote_id for emote in message.emotes}
         self._rendered_text = ""
+        self._render_pending = False
         self.setObjectName("MessageText")
         self.setReadOnly(True)
         self.setUndoRedoEnabled(False)
@@ -129,8 +130,17 @@ class EmoteMessageLabel(QTextEdit):
         self.layout_changed.emit()
 
     def _emote_ready(self, emote_id: str) -> None:
-        if emote_id in self.emote_ids:
-            self._render()
+        # A burst of emote downloads (a message with several distinct emotes,
+        # plus other messages) must trigger ONE re-render per event-loop
+        # iteration, not one full HTML rebuild per image.
+        if emote_id not in self.emote_ids or self._render_pending:
+            return
+        self._render_pending = True
+        QTimer.singleShot(0, self._flush_pending_render)
+
+    def _flush_pending_render(self) -> None:
+        self._render_pending = False
+        self._render()
 
 
 class TwitchBadgeLabel(_ElidedLabel):
@@ -150,14 +160,33 @@ class TwitchBadgeLabel(_ElidedLabel):
         self.language = settings.language
         self.image_height = max(18, min(32, round(settings.font_size * 1.25)))
         self.asset_cache = asset_cache
+        self._has_image: bool | None = None  # None: first render must always apply
+        self._render_pending = False
         self.setAlignment(Qt.AlignCenter)
-        self.asset_cache.badge_ready.connect(self._render)
+        self.asset_cache.badge_ready.connect(self._badge_ready)
+        self._render()
+
+    def _badge_ready(self, *_args) -> None:
+        # Every badge label in the overlay receives every badge_ready signal;
+        # coalesce the re-render and skip it entirely when the visible state
+        # would not change.
+        if self._render_pending:
+            return
+        self._render_pending = True
+        QTimer.singleShot(0, self._flush_pending_render)
+
+    def _flush_pending_render(self) -> None:
+        self._render_pending = False
         self._render()
 
     def _render(self) -> None:
         source = self.asset_cache.badge_source(self.badge)
         pixmap = _pixmap_from_source(source)
-        if not pixmap.isNull():
+        has_image = not pixmap.isNull()
+        if has_image == self._has_image:
+            return
+        self._has_image = has_image
+        if has_image:
             scaled = pixmap.scaled(
                 self.image_height, self.image_height, Qt.KeepAspectRatio, Qt.SmoothTransformation,
             )
