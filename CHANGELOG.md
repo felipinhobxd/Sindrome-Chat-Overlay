@@ -10,10 +10,11 @@ and add the section **before** publishing the version bump.
 
 ### Internal
 
-- CI: the instrumented-test job boots a `google_apis` API 30 emulator with
-  animations disabled, a 10-minute boot timeout, a `/dev/kvm` fail-fast check
-  and test-report upload on failure; the previous AOSP image hung its shell
-  before any test could run.
+- CI: the instrumented-test job grants the runner user KVM access (udev rule
+  for `/dev/kvm`), boots a `google_apis` API 30 emulator with animations
+  disabled, a 10-minute boot timeout and test-report upload on failure; the
+  previous setup silently fell back to software emulation and never reached
+  the test phase.
 - Overlay window instrumented tests proxy window mutations to the main thread
   (`runOnMainSync`), because `WindowManager.addView` requires a Looper that
   the instrumentation thread does not have.

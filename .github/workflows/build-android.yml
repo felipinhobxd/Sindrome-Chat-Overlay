@@ -176,10 +176,16 @@ jobs:
           gradle-version: "8.10.2"
           cache-provider: basic
 
-      - name: Verify hardware acceleration is available
-        # Fail fast with a clear message instead of a slow software-emulation
-        # hang: ddmlib reports a missing /dev/kvm as opaque shell timeouts.
-        run: ls -la /dev/kvm
+      - name: Enable KVM group perms
+        # Hosted runners ship /dev/kvm with root:kvm ownership, but the
+        # runner user is not in the kvm group; without this rule QEMU
+        # silently falls back to software emulation and the emulator never
+        # boots (adb reports "device offline" until the boot timeout).
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -al /dev/kvm
 
       - name: Run instrumented tests on an emulator
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.34.0
