@@ -799,12 +799,12 @@ class YouTubeProvider(BaseProvider):
             self._run_official_polling(live_chat_id)
 
     def _official_live_chat_id_for_video(self, video_id: str) -> str:
+        # The key is attached as a header by _get_json.
         details = self._get_json(
             "https://www.googleapis.com/youtube/v3/videos",
             params={
                 "part": "liveStreamingDetails",
                 "id": video_id,
-                "key": self.data_api_key,
             },
         )
         items = details.get("items") or []
@@ -943,7 +943,6 @@ class YouTubeProvider(BaseProvider):
                 "part": "id,snippet,authorDetails",
                 "liveChatId": live_chat_id,
                 "maxResults": 200,
-                "key": self.data_api_key,
             }
             if self._official_page_token:
                 params["pageToken"] = self._official_page_token
@@ -995,8 +994,13 @@ class YouTubeProvider(BaseProvider):
         return response
 
     def _get_json(self, url: str, params: dict[str, Any]) -> dict[str, Any]:
+        # The API key travels in the x-goog-api-key header instead of the
+        # "key" query parameter so it cannot leak into proxy/CDN logs.
+        # (The gRPC path already used header metadata.)
+        sent_params = {key: value for key, value in params.items() if key != "key"}
+        headers = {"x-goog-api-key": self.data_api_key} if self.data_api_key else None
         try:
-            response = self.session.get(url, params=params, timeout=(10, 25))
+            response = self.session.get(url, params=sent_params, headers=headers, timeout=(10, 25))
         except requests.RequestException as exc:
             raise ConnectionError("Failed to access the YouTube API.") from exc
         if response.status_code == 429:

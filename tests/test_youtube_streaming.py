@@ -87,7 +87,32 @@ class YouTubeStreamingProviderTests(unittest.TestCase):
                 "live-chat-id",
             )
         self.assertEqual(request.call_args.kwargs["params"]["part"], "liveStreamingDetails")
-        self.assertEqual(request.call_args.kwargs["params"]["key"], "data-key")
+        self.assertNotIn("key", request.call_args.kwargs["params"])
+
+    def test_get_json_sends_api_key_as_header_and_not_in_query(self) -> None:
+        provider = YouTubeProvider(queue.Queue(), "https://youtu.be/abcdefghijk", "data-key")
+        captured: dict[str, object] = {}
+
+        class FakeResponse:
+            status_code = 200
+
+            def json(self) -> dict:
+                return {}
+
+        def fake_get(url, **kwargs):
+            captured["url"] = url
+            captured["params"] = kwargs.get("params")
+            captured["headers"] = kwargs.get("headers")
+            return FakeResponse()
+
+        with patch.object(provider.session, "get", side_effect=fake_get):
+            provider._get_json(
+                "https://www.googleapis.com/youtube/v3/videos",
+                params={"part": "liveStreamingDetails", "id": "abcdefghijk", "key": "data-key"},
+            )
+        self.assertNotIn("key", captured["params"])
+        self.assertEqual(captured["headers"], {"x-goog-api-key": "data-key"})
+        self.assertNotIn("key=", captured["url"])
 
     def test_started_video_without_live_chat_is_reported_as_disabled(self) -> None:
         provider = YouTubeProvider(queue.Queue(), "https://youtu.be/abcdefghijk", "data-key")
