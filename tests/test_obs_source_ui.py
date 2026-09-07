@@ -101,8 +101,8 @@ class ObsSourceUiTests(unittest.TestCase):
                 ["obs-first"],
             )
 
-            # Desktop expiry/trim uses _remove_at; OBS intentionally retains its own history.
-            window._remove_at(0)
+            # Desktop expiry/trim uses remove_at; OBS intentionally retains its own history.
+            window.remove_at(0)
             app.processEvents()
             self.assertEqual(window.messages, [])
             self.assertEqual(
