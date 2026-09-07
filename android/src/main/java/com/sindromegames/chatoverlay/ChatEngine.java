@@ -25,7 +25,7 @@ public final class ChatEngine {
     private static final String TAG = "ChatEngine";
 
     private final Context context;
-    private final NotificationSoundPlayer sounds = new NotificationSoundPlayer();
+    private final NotificationSoundPlayer sounds;
     private final Object lock = new Object();
     private final AtomicLong generation = new AtomicLong();
     private ExecutorService executor;
@@ -35,6 +35,7 @@ public final class ChatEngine {
     public ChatEngine(Context context) {
         this.context = context.getApplicationContext();
         this.settings = AppSettings.load(this.context);
+        this.sounds = new NotificationSoundPlayer(this.context);
     }
 
     public void start() {

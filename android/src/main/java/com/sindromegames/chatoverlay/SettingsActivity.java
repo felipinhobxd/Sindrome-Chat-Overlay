@@ -42,7 +42,7 @@ public final class SettingsActivity extends AppCompatActivity {
     private String originalKey;
     private KeyState keyState = KeyState.UNCHANGED;
     private final YouTubeKeyValidator validator = new YouTubeKeyValidator();
-    private final NotificationSoundPlayer soundPlayer = new NotificationSoundPlayer();
+    private final NotificationSoundPlayer soundPlayer = new NotificationSoundPlayer(this);
     private final Handler debounce = new Handler(Looper.getMainLooper());
     private Runnable pendingValidation;
 

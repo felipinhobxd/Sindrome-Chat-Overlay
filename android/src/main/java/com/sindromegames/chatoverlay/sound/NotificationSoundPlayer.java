@@ -1,12 +1,14 @@
 package com.sindromegames.chatoverlay.sound;
 
+import android.content.Context;
 import android.media.AudioAttributes;
 import android.media.AudioManager;
-import android.media.MediaDataSource;
-import android.media.MediaPlayer;
+import android.media.SoundPool;
 import android.media.ToneGenerator;
 import android.util.Log;
 
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -14,11 +16,17 @@ import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
+/**
+ * Plays the synthesized notification presets through a SoundPool.
+ *
+ * SoundPool keeps short samples decoded in memory and mixes up to four
+ * streams, so bursts of chat overlap naturally instead of queueing behind a
+ * serial MediaPlayer executor (which used to delay sounds by seconds and
+ * allocate a new player plus a fresh PCM buffer for every message).
+ */
 public final class NotificationSoundPlayer {
     private static final String TAG = "ChatSound";
     private static final int SAMPLE_RATE = 44_100;
@@ -37,18 +45,24 @@ public final class NotificationSoundPlayer {
         PRESETS = Collections.unmodifiableMap(presets);
     }
 
-    private final ExecutorService executor = Executors.newSingleThreadExecutor(runnable -> {
-        Thread thread = new Thread(runnable, "chat-sound");
-        thread.setDaemon(true);
-        return thread;
-    });
+    private final Context context;
+    private final SoundPool soundPool;
+    private final Map<String, Integer> soundIds = new ConcurrentHashMap<>();
     private final AtomicLong lastPlayed = new AtomicLong(0);
-    private final Object playbackLock = new Object();
-    private volatile MediaPlayer activePlayer;
+    private volatile boolean released;
+
+    public NotificationSoundPlayer(Context context) {
+        this.context = context.getApplicationContext();
+        soundPool = new SoundPool.Builder()
+                .setMaxStreams(4)
+                .setAudioAttributes(mediaAudioAttributes())
+                .build();
+    }
 
     public boolean play(String preset, int volume, int minimumIntervalMs, boolean bypassLimit) {
+        if (released) return false;
         int safeVolume = Math.max(0, Math.min(200, volume));
-        if (safeVolume == 0 || executor.isShutdown()) return false;
+        if (safeVolume == 0) return false;
         long now = android.os.SystemClock.elapsedRealtime();
         if (!bypassLimit) {
             long previous = lastPlayed.get();
@@ -59,57 +73,64 @@ public final class NotificationSoundPlayer {
         }
 
         String safePreset = PRESETS.containsKey(preset) ? preset : "pop";
-        try {
-            executor.execute(() -> playWithMediaPlayer(safePreset, safeVolume));
+        int soundId = ensureLoaded(safePreset);
+        if (soundId == 0) {
+            playFallbackTone(safeVolume, patternDurationMs(PRESETS.get(safePreset)));
             return true;
-        } catch (RejectedExecutionException ignored) {
-            return false;
+        }
+        try {
+            // SoundPool gain tops out at 1.0; the 100-200% range plays at full
+            // sample amplitude instead of digitally clipping further.
+            float gain = Math.max(0f, Math.min(1f, safeVolume / 100f));
+            return soundPool.play(soundId, gain, gain, 1, 0, 1f) != 0;
+        } catch (RuntimeException failure) {
+            Log.w(TAG, "SoundPool could not play chat sound; using fallback tone", failure);
+            playFallbackTone(safeVolume, patternDurationMs(PRESETS.get(safePreset)));
+            return true;
         }
     }
 
     public void stop() {
-        executor.shutdownNow();
-        MediaPlayer player;
-        synchronized (playbackLock) {
-            player = activePlayer;
-            activePlayer = null;
+        if (released) return;
+        released = true;
+        try {
+            soundPool.autoPause();
+        } catch (RuntimeException ignored) {
+            // Release below is the authoritative cleanup.
         }
-        releasePlayer(player, true);
+        soundIds.clear();
+        soundPool.release();
     }
 
-    private void playWithMediaPlayer(String preset, int volume) {
-        double[][] pattern = PRESETS.getOrDefault(preset, PRESETS.get("pop"));
-        byte[] wav = buildWav(pattern);
-        long durationMs = patternDurationMs(pattern);
-        MediaPlayer player = null;
+    private int ensureLoaded(String preset) {
+        Integer existing = soundIds.get(preset);
+        if (existing != null) return existing;
+        File file = presetFile(preset);
         try {
-            player = new MediaPlayer();
-            player.setAudioAttributes(mediaAudioAttributes());
-            player.setDataSource(new ByteArrayMediaDataSource(wav));
-            float gain = Math.max(0f, Math.min(1f, volume / 200f));
-            player.setVolume(gain, gain);
-            player.setLooping(false);
-            player.prepare();
-
-            MediaPlayer previous;
-            synchronized (playbackLock) {
-                previous = activePlayer;
-                activePlayer = player;
-            }
-            if (previous != null && previous != player) releasePlayer(previous, true);
-
-            player.start();
-            Thread.sleep(Math.max(140L, durationMs + 120L));
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
+            if (!file.isFile()) writePresetFile(preset, file);
+            int id = soundPool.load(file.getAbsolutePath(), 1);
+            soundIds.put(preset, id);
+            return id;
         } catch (IOException | RuntimeException failure) {
-            Log.w(TAG, "MediaPlayer could not play chat sound; using media-stream fallback", failure);
-            playFallbackTone(volume, durationMs);
-        } finally {
-            synchronized (playbackLock) {
-                if (activePlayer == player) activePlayer = null;
-            }
-            releasePlayer(player, false);
+            Log.w(TAG, "Unable to prepare chat sound sample", failure);
+            return 0;
+        }
+    }
+
+    private File presetFile(String preset) {
+        File directory = new File(context.getCacheDir(), "chat-sounds");
+        if (!directory.exists()) directory.mkdirs();
+        return new File(directory, preset + ".wav");
+    }
+
+    private void writePresetFile(String preset, File file) throws IOException {
+        byte[] wav = buildWav(PRESETS.getOrDefault(preset, PRESETS.get("pop")));
+        File partial = new File(file.getParentFile(), preset + ".partial");
+        try (FileOutputStream output = new FileOutputStream(partial)) {
+            output.write(wav);
+        }
+        if (!partial.renameTo(file)) {
+            throw new IOException("Unable to finalize chat sound sample file");
         }
     }
 
@@ -127,31 +148,11 @@ public final class NotificationSoundPlayer {
             tone = new ToneGenerator(AudioManager.STREAM_MUSIC, toneVolume);
             tone.startTone(ToneGenerator.TONE_PROP_BEEP2,
                     (int) Math.max(100L, Math.min(1_000L, durationMs)));
-            Thread.sleep(Math.max(120L, durationMs + 80L));
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
         } catch (RuntimeException fallbackFailure) {
             Log.w(TAG, "Fallback media tone could not play", fallbackFailure);
         } finally {
             if (tone != null) tone.release();
         }
-    }
-
-    private static void releasePlayer(MediaPlayer player, boolean stopFirst) {
-        if (player == null) return;
-        if (stopFirst) {
-            try {
-                player.stop();
-            } catch (IllegalStateException ignored) {
-                // The player may still be preparing or may already be stopped.
-            }
-        }
-        try {
-            player.reset();
-        } catch (IllegalStateException ignored) {
-            // Release remains safe even if reset is rejected by the current state.
-        }
-        player.release();
     }
 
     static byte[] buildWav(double[][] pattern) {
@@ -199,30 +200,5 @@ public final class NotificationSoundPlayer {
             if (note != null && note.length >= 2) total += Math.max(0L, Math.round(note[1]));
         }
         return total;
-    }
-
-    private static final class ByteArrayMediaDataSource extends MediaDataSource {
-        private final byte[] data;
-
-        ByteArrayMediaDataSource(byte[] data) {
-            this.data = data == null ? new byte[0] : data;
-        }
-
-        @Override public int readAt(long position, byte[] buffer, int offset, int size) {
-            if (size == 0) return 0;
-            if (position < 0 || position >= data.length || size < 0) return -1;
-            int start = (int) position;
-            int count = Math.min(size, data.length - start);
-            System.arraycopy(data, start, buffer, offset, count);
-            return count;
-        }
-
-        @Override public long getSize() {
-            return data.length;
-        }
-
-        @Override public void close() {
-            // The byte array is owned by this short-lived playback request.
-        }
     }
 }
