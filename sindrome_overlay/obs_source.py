@@ -9,6 +9,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
+import requests
+
 from .emotes import twitch_emote_url
 from .models import ChatEmote, ChatMessage
 
@@ -62,6 +64,7 @@ class ObsChatSourceServer:
         self._lock = threading.RLock()
         self._httpd: _LocalObsHTTPServer | None = None
         self._thread: threading.Thread | None = None
+        self._badge_image_urls: dict[str, str] = {}
         self._last_error = ""
 
     @property
@@ -92,6 +95,7 @@ class ObsChatSourceServer:
         if self.running:
             return True
         self.stop()
+        self._load_badge_images_async()
         try:
             server = _LocalObsHTTPServer((_HOST, self._config.port), _ObsRequestHandler)
         except OSError as exc:
@@ -112,6 +116,44 @@ class ObsChatSourceServer:
         thread.start()
         self.log.info("OBS browser source listening on %s", self.url)
         return True
+
+    def _load_badge_images_async(self) -> None:
+        """Fetches the global Twitch badge manifest once so the browser source
+        can render badge images instead of text. Failures are silent: the page
+        falls back to the text badge names it already receives."""
+        def worker() -> None:
+            try:
+                response = requests.get(
+                    "https://badges.twitch.tv/v1/badges/global/display?language=en",
+                    timeout=(3.0, 6.0),
+                )
+                payload = response.json() if response.status_code < 400 else {}
+            except (requests.RequestException, ValueError) as exc:
+                self.log.debug("Badge manifest unavailable: %s", exc)
+                return
+            mapping: dict[str, str] = {}
+            badge_sets = payload.get("badge_sets") if isinstance(payload, dict) else None
+            if isinstance(badge_sets, dict):
+                for set_id, set_payload in badge_sets.items():
+                    versions = set_payload.get("versions") if isinstance(set_payload, dict) else None
+                    if not isinstance(versions, dict):
+                        continue
+                    for version, version_payload in versions.items():
+                        if not isinstance(version_payload, dict):
+                            continue
+                        url = str(
+                            version_payload.get("image_url_2x")
+                            or version_payload.get("image_url_1x")
+                            or ""
+                        )
+                        if set_id and version and url.startswith("https://"):
+                            mapping[f"{set_id}/{version}"] = url
+            with self._lock:
+                self._badge_image_urls = mapping
+            if mapping:
+                self.log.info("OBS badge images loaded: %d", len(mapping))
+
+        threading.Thread(target=worker, name="SindromeObsBadges", daemon=True).start()
 
     def stop(self) -> None:
         server = self._httpd
@@ -139,13 +181,18 @@ class ObsChatSourceServer:
             self._revision += 1
 
     def replace_messages(self, messages: list[ChatMessage]) -> None:
-        payloads = [message_payload(message) for message in messages[-self._config.max_messages :]]
+        payloads = [
+            message_payload(message, self._badge_image_urls)
+            for message in messages[-self._config.max_messages :]
+        ]
         with self._lock:
             self._messages = deque(payloads, maxlen=self._config.max_messages)
             self._revision += 1
 
     def publish_message(self, message: ChatMessage) -> None:
-        payload = message_payload(message)
+        with self._lock:
+            badge_images = dict(self._badge_image_urls)
+        payload = message_payload(message, badge_images)
         with self._lock:
             message_id = str(payload.get("message_id") or "")
             if message_id and any(item.get("message_id") == message_id for item in self._messages):
@@ -202,13 +249,21 @@ class ObsChatSourceServer:
             }
 
 
-def message_payload(message: ChatMessage) -> dict[str, Any]:
+def message_payload(
+    message: ChatMessage,
+    badge_images: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    resolved_badge_images = badge_images or {}
     return {
         "platform": message.platform,
         "author": message.author,
         "author_id": message.author_id,
         "author_colour": message.safe_author_colour,
         "badges": list(message.badges[:3]),
+        "badge_images": [
+            resolved_badge_images.get(f"{badge.set_id}/{badge.version}", "")
+            for badge in message.badge_refs[:3]
+        ],
         "amount": message.amount,
         "message_id": message.message_id,
         "kind": message.kind,
@@ -412,6 +467,12 @@ body {
   background: rgba(255,255,255,.15);
   color: #e5eaf5;
 }
+.badge-img {
+  height: 1.05em;
+  width: auto;
+  margin-right: 4px;
+  vertical-align: -.12em;
+}
 .author { font-weight: 800; }
 .amount {
   display: inline-block;
@@ -491,11 +552,23 @@ body {
       row.appendChild(platform);
     }
     if (config.show_badges) {
-      for (const badge of (message.badges || []).slice(0, 3)) {
-        const node = document.createElement('span');
-        node.className = 'badge';
-        node.textContent = badgeName(badge);
-        row.appendChild(node);
+      const names = (message.badges || []).slice(0, 3);
+      const images = message.badge_images || [];
+      for (let index = 0; index < names.length; index++) {
+        const url = String(images[index] || '');
+        if (url.startsWith('https://')) {
+          const image = document.createElement('img');
+          image.className = 'badge-img';
+          image.src = url;
+          image.alt = badgeName(names[index]);
+          image.title = badgeName(names[index]);
+          row.appendChild(image);
+        } else {
+          const node = document.createElement('span');
+          node.className = 'badge';
+          node.textContent = badgeName(names[index]);
+          row.appendChild(node);
+        }
       }
     }
 
