@@ -141,6 +141,12 @@ public final class ChatEngine {
             }
         }
 
+        @Override public void onDeleteUser(String platform, String userId) {
+            synchronized (lock) {
+                if (active()) ChatBus.deleteByAuthor(platform, userId);
+            }
+        }
+
         @Override public void onClear(String platform) {
             synchronized (lock) {
                 if (active()) ChatBus.clearPlatform(platform);

@@ -186,10 +186,12 @@ def parse_twitch_line(line: str, language: str = "en") -> tuple[str, ChatMessage
         return "delete", tags.get("target-msg-id", "")
     if " CLEARCHAT " in rest:
         clear_target = rest.split(" CLEARCHAT ", 1)[1]
-        # A trailing user means only that user's history was removed. Without
-        # author IDs on older cards, leaving those cards alone is safer than
-        # erasing the entire overlay.
-        return ("other", None) if " :" in clear_target else ("clear", None)
+        if " :" in clear_target:
+            # Ban/timeout for one user: the platform supplies the numeric user
+            # id in the tags, which matches the author_id stored on messages.
+            target_id = tags.get("target-user-id", "")
+            return "delete_author", target_id or clear_target.rsplit(" :", 1)[-1].strip()
+        return "clear", None
     if " NOTICE " in rest:
         return "notice", rest.rsplit(" :", 1)[-1]
     if rest.startswith("PING"):
@@ -283,6 +285,8 @@ class TwitchProvider(BaseProvider):
                         self.emit_message(payload)
                     elif kind == "delete" and isinstance(payload, str):
                         self.emit_delete(payload)
+                    elif kind == "delete_author" and isinstance(payload, str):
+                        self.emit_delete_author(payload)
                     elif kind == "clear":
                         self.emit_clear()
                     elif kind == "ready" and not announced:

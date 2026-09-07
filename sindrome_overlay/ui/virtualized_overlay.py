@@ -341,6 +341,14 @@ class OverlayWindow(_LegacyOverlayWindow):
         if index >= 0:
             self._remove_at(index)
 
+    def _remove_author_id(self, author_id: str) -> None:
+        # Ban/timeout: drop the banned account's history here and in the OBS
+        # browser source.
+        self.obs_source.remove_by_author(author_id)
+        for index in range(len(self.messages) - 1, -1, -1):
+            if self.messages[index].author_id == author_id:
+                self._remove_at(index)
+
     def _remove_at(self, index: int) -> None:
         if index < 0 or index >= len(self.messages):
             return

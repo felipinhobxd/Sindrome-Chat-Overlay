@@ -715,6 +715,8 @@ class OverlayWindow(QMainWindow):
                 self._set_status(event.platform, event.state, event.text)
             elif event.kind == "delete" and event.message_id:
                 self._remove_message_id(event.message_id)
+            elif event.kind == "delete_author" and event.author_id:
+                self._remove_author_id(event.author_id)
             elif event.kind == "clear":
                 self.clear_messages(event.platform)
 
@@ -792,6 +794,12 @@ class OverlayWindow(QMainWindow):
         except ValueError:
             return
         self._remove_at(index)
+
+    def _remove_author_id(self, author_id: str) -> None:
+        # Ban/timeout: remove every surviving message from that account.
+        for index in range(len(self.messages) - 1, -1, -1):
+            if self.messages[index].author_id == author_id:
+                self._remove_at(index)
 
     def _remove_at(self, index: int) -> None:
         if index < 0 or index >= len(self.cards):

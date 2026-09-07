@@ -49,6 +49,15 @@ class BaseProvider(threading.Thread):
             )
         )
 
+    def emit_delete_author(self, author_id: str) -> None:
+        self._emit(
+            ProviderEvent(
+                kind="delete_author",
+                platform=self.platform,
+                author_id=author_id,
+            )
+        )
+
     def emit_clear(self) -> None:
         self._emit(ProviderEvent(kind="clear", platform=self.platform))
 

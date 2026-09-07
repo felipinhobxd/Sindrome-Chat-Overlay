@@ -139,6 +139,18 @@ public final class ChatBus {
         if (shouldSchedule) MAIN.post(ChatBus::drainMessages);
     }
 
+    /** Drops every message from one account (Twitch ban/timeout). */
+    public static void deleteByAuthor(String platform, String authorId) {
+        if (authorId == null || authorId.isEmpty()) return;
+        boolean shouldSchedule = false;
+        synchronized (LOCK) {
+            boolean changed = HISTORY.removeIf(item -> item.platform.equals(platform)
+                    && item.authorId.equals(authorId));
+            if (changed) shouldSchedule = requestHistoryResyncLocked();
+        }
+        if (shouldSchedule) MAIN.post(ChatBus::drainMessages);
+    }
+
     public static void clearPlatform(String platform) {
         boolean shouldSchedule = false;
         synchronized (LOCK) {

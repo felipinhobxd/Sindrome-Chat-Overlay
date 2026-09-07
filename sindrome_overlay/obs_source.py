@@ -163,6 +163,17 @@ class ObsChatSourceServer:
             self._messages = deque(retained, maxlen=self._config.max_messages)
             self._revision += 1
 
+    def remove_by_author(self, author_id: str) -> None:
+        """Drops the banned account's history from the browser source."""
+        if not author_id:
+            return
+        with self._lock:
+            retained = [item for item in self._messages if item.get("author_id") != author_id]
+            if len(retained) == len(self._messages):
+                return
+            self._messages = deque(retained, maxlen=self._config.max_messages)
+            self._revision += 1
+
     def clear_messages(self, platform: str = "") -> None:
         with self._lock:
             if platform:
@@ -195,6 +206,7 @@ def message_payload(message: ChatMessage) -> dict[str, Any]:
     return {
         "platform": message.platform,
         "author": message.author,
+        "author_id": message.author_id,
         "author_colour": message.safe_author_colour,
         "badges": list(message.badges[:3]),
         "amount": message.amount,

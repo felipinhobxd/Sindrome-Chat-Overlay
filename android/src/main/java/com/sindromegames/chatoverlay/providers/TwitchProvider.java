@@ -110,6 +110,7 @@ public final class TwitchProvider extends ChatProvider {
                 if (parsed.reconnect) throw new IOException("Twitch requested reconnection");
                 if (parsed.clear) callback.onClear("twitch");
                 if (!parsed.deleteId.isEmpty()) callback.onDelete("twitch", parsed.deleteId);
+                if (!parsed.deleteUserId.isEmpty()) callback.onDeleteUser("twitch", parsed.deleteUserId);
                 if (parsed.message != null) {
                     if (!announced) {
                         callback.onStatus("twitch", "connected", YouTubeMode.STOPPED);
@@ -165,8 +166,18 @@ public final class TwitchProvider extends ChatProvider {
         if (rest.startsWith("PING")) return ParsedLine.ping(rest.substring(4).trim());
         if (rest.contains(" RECONNECT")) return ParsedLine.reconnect();
         if (rest.contains(" CLEARMSG ")) return ParsedLine.delete(tags.getOrDefault("target-msg-id", ""));
-        if (rest.contains(" CLEARCHAT ") && !rest.substring(rest.indexOf(" CLEARCHAT ") + 11)
-                .contains(" :")) return ParsedLine.clear();
+        if (rest.contains(" CLEARCHAT ")) {
+            String after = rest.substring(rest.indexOf(" CLEARCHAT ") + 11);
+            if (after.contains(" :")) {
+                // Ban/timeout for one user. The numeric target-user-id tag
+                // matches the authorId stored on messages; the login after
+                // the colon is only a fallback.
+                String userId = tags.getOrDefault("target-user-id", "");
+                if (userId.isEmpty()) userId = after.substring(after.indexOf(" :") + 2).trim();
+                return ParsedLine.deleteUser(userId);
+            }
+            return ParsedLine.clear();
+        }
 
         if (rest.contains(" PRIVMSG ") && rest.contains(" :")) {
             int split = rest.indexOf(" :");
@@ -319,18 +330,21 @@ public final class TwitchProvider extends ChatProvider {
         public final ChatMessage message;
         public final String ping;
         public final String deleteId;
+        public final String deleteUserId;
         public final boolean clear;
         public final boolean reconnect;
-        private ParsedLine(ChatMessage message, String ping, String deleteId,
+        private ParsedLine(ChatMessage message, String ping, String deleteId, String deleteUserId,
                            boolean clear, boolean reconnect) {
             this.message = message; this.ping = ping; this.deleteId = deleteId;
+            this.deleteUserId = deleteUserId;
             this.clear = clear; this.reconnect = reconnect;
         }
-        static ParsedLine message(ChatMessage value) { return new ParsedLine(value, null, "", false, false); }
-        static ParsedLine ping(String value) { return new ParsedLine(null, value, "", false, false); }
-        static ParsedLine delete(String value) { return new ParsedLine(null, null, value, false, false); }
-        static ParsedLine clear() { return new ParsedLine(null, null, "", true, false); }
-        static ParsedLine reconnect() { return new ParsedLine(null, null, "", false, true); }
-        static ParsedLine other() { return new ParsedLine(null, null, "", false, false); }
+        static ParsedLine message(ChatMessage value) { return new ParsedLine(value, null, "", "", false, false); }
+        static ParsedLine ping(String value) { return new ParsedLine(null, value, "", "", false, false); }
+        static ParsedLine delete(String value) { return new ParsedLine(null, null, value, "", false, false); }
+        static ParsedLine deleteUser(String value) { return new ParsedLine(null, null, "", value, false, false); }
+        static ParsedLine clear() { return new ParsedLine(null, null, "", "", true, false); }
+        static ParsedLine reconnect() { return new ParsedLine(null, null, "", "", false, true); }
+        static ParsedLine other() { return new ParsedLine(null, null, "", "", false, false); }
     }
 }
