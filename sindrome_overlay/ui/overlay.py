@@ -751,7 +751,7 @@ class OverlayWindow(QMainWindow):
         self.messages.append(message)
         self._append_card(message)
         self._trim_messages()
-        self._play_message_sound(message.platform)
+        self._play_message_sound(message.platform, message)
 
     def _append_card(self, message: ChatMessage) -> None:
         self.empty_state.hide()
@@ -780,7 +780,32 @@ class OverlayWindow(QMainWindow):
         if self.settings.auto_scroll:
             self.scroll.verticalScrollBar().setValue(maximum)
 
-    def _play_message_sound(self, platform: str) -> None:
+    def _play_message_sound(self, platform: str, message: ChatMessage | None = None) -> None:
+        # High-value events must always be audible and get their own presets so
+        # they stand out from the regular per-platform chat sound.
+        kind = message.kind if message is not None else "message"
+        if kind in {"paid", "bits"}:
+            self.notification_sounds.play(
+                "bell",
+                enabled=self.settings.sound_enabled,
+                volume=self.settings.sound_volume,
+                twitch_sound="bell",
+                youtube_sound="bell",
+                min_interval_ms=0,
+                bypass_limit=True,
+            )
+            return
+        if kind == "membership":
+            self.notification_sounds.play(
+                "chime",
+                enabled=self.settings.sound_enabled,
+                volume=self.settings.sound_volume,
+                twitch_sound="chime",
+                youtube_sound="chime",
+                min_interval_ms=0,
+                bypass_limit=True,
+            )
+            return
         self.notification_sounds.play(
             platform,
             enabled=self.settings.sound_enabled,

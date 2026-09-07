@@ -424,6 +424,15 @@ body {
   font-size: .8em;
   text-shadow: none;
 }
+/* High-value event highlights */
+.chat-message.paid, .chat-message.bits {
+  border-left: 3px solid #f6b73c;
+  padding-left: 5px;
+}
+.chat-message.membership {
+  border-left: 3px solid #c9a7ff;
+  padding-left: 5px;
+}
 .message-text { white-space: pre-wrap; }
 .emote {
   display: inline-block;
