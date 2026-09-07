@@ -224,7 +224,6 @@ public final class YouTubeProvider extends ChatProvider {
         Map<String, String> parameters = new LinkedHashMap<>();
         parameters.put("part", "liveStreamingDetails");
         parameters.put("id", videoId);
-        parameters.put("key", apiKey);
         JSONObject details = apiGet("https://www.googleapis.com/youtube/v3/videos", parameters);
         JSONArray items = details.optJSONArray("items");
         if (items == null || items.length() == 0) throw new StreamOffline();
@@ -322,7 +321,6 @@ public final class YouTubeProvider extends ChatProvider {
             parameters.put("part", "id,snippet,authorDetails");
             parameters.put("liveChatId", chatId);
             parameters.put("maxResults", "200");
-            parameters.put("key", apiKey);
             if (!officialPageToken.isEmpty()) parameters.put("pageToken", officialPageToken);
             JSONObject body = apiGet("https://www.googleapis.com/youtube/v3/liveChat/messages", parameters);
             JSONArray items = body.optJSONArray("items");
@@ -340,7 +338,9 @@ public final class YouTubeProvider extends ChatProvider {
 
     private JSONObject apiGet(String url, Map<String, String> parameters) throws Exception {
         try {
-            return net.getJson(url, parameters);
+            // The API key travels in the X-goog-api-key header instead of the
+            // "key" query parameter so it cannot leak into proxy/CDN logs.
+            return net.getJson(url, parameters, Map.of("X-goog-api-key", apiKey));
         } catch (NetClient.HttpFailure failure) {
             String reason = apiErrorReason(failure.responseBody);
             if (failure.code == 429 || reason.contains("quota") || reason.contains("rate"))

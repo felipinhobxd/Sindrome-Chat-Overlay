@@ -245,6 +245,10 @@ public final class SettingsActivity extends AppCompatActivity {
         }
         keyState = KeyState.CHECKING; renderMode();
         validator.validate(key, result -> {
+            // The validator executor can deliver after onDestroy (e.g. the
+            // activity is recreated by a rotation); touching views then would
+            // leak the destroyed instance.
+            if (isDestroyed() || isFinishing()) return;
             if (!apiKey.getText().toString().trim().equals(key)) return;
             keyState = switch (result) {
                 case VALID -> KeyState.VALID;

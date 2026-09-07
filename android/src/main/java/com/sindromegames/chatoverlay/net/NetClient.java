@@ -37,6 +37,11 @@ public final class NetClient {
 
     public JSONObject getJson(String url, Map<String, String> parameters)
             throws IOException, JSONException {
+        return getJson(url, parameters, Map.of());
+    }
+
+    public JSONObject getJson(String url, Map<String, String> parameters,
+            Map<String, String> headers) throws IOException, JSONException {
         HttpUrl parsed = HttpUrl.parse(url);
         if (parsed == null || !parsed.isHttps()) throw new IOException("Invalid HTTPS URL");
         HttpUrl.Builder builder = parsed.newBuilder();
@@ -44,7 +49,12 @@ public final class NetClient {
             if (item.getValue() != null && !item.getValue().isEmpty())
                 builder.addQueryParameter(item.getKey(), item.getValue());
         }
-        ResponseData response = get(builder.build().toString());
+        Request.Builder request = new Request.Builder().url(builder.build()).get();
+        applyBrowserHeaders(request, request.build().url());
+        for (Map.Entry<String, String> item : headers.entrySet())
+            if (item.getValue() != null && !item.getValue().isEmpty())
+                request.header(item.getKey(), item.getValue());
+        ResponseData response = execute(request.build());
         if (response.code < 200 || response.code >= 300)
             throw new HttpFailure(response.code, response.body);
         return new JSONObject(response.body);
