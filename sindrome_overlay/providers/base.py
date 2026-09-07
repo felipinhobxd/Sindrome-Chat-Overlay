@@ -18,6 +18,7 @@ class BaseProvider(threading.Thread):
         super().__init__(name=f"{self.platform}-chat", daemon=True)
         self.events = events
         self.stop_event = threading.Event()
+        self._emit_lock = threading.Lock()
         self.log = logging.getLogger(f"sindrome_overlay.{self.platform}")
 
     def stop(self) -> None:
@@ -64,9 +65,13 @@ class BaseProvider(threading.Thread):
     def _emit(self, event: ProviderEvent) -> None:
         """Keep provider backlogs bounded if the UI cannot drain events fast enough."""
         try:
-            while self.events.qsize() >= _MAX_PENDING_EVENTS:
-                self.events.get_nowait()
-            self.events.put_nowait(event)
+            # Twitch and YouTube emit from their own threads; without the lock
+            # both can race the size check and drop more events than needed
+            # (or drop a fresh status while keeping a stale one).
+            with self._emit_lock:
+                while self.events.qsize() >= _MAX_PENDING_EVENTS:
+                    self.events.get_nowait()
+                self.events.put_nowait(event)
         except queue.Empty:
             self.events.put_nowait(event)
         except queue.Full:
