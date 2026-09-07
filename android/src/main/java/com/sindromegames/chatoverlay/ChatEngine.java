@@ -123,16 +123,18 @@ public final class ChatEngine {
 
         @Override public void onMessage(ChatMessage message) {
             if (message == null) return;
-            synchronized (lock) {
-                if (!active()) return;
-                AppSettings current = settings;
-                if (current.hideCommands && message.text.startsWith("!")) return;
-                ChatBus.publish(message);
-                if (current.soundEnabled) {
-                    String preset = message.platform.equals("twitch")
-                            ? current.twitchSound : current.youtubeSound;
-                    sounds.play(preset, current.soundVolume, current.soundMinIntervalMs, false);
-                }
+            // No engine lock here: this runs for every chat message and the
+            // same monitor guards start()/stop() (which do network-object and
+            // settings I/O). active() reads an AtomicLong, settings is
+            // volatile, and ChatBus/sounds are internally thread-safe.
+            if (!active()) return;
+            AppSettings current = settings;
+            if (current.hideCommands && message.text.startsWith("!")) return;
+            ChatBus.publish(message);
+            if (current.soundEnabled) {
+                String preset = message.platform.equals("twitch")
+                        ? current.twitchSound : current.youtubeSound;
+                sounds.play(preset, current.soundVolume, current.soundMinIntervalMs, false);
             }
         }
 
