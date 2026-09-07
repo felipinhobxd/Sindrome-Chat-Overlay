@@ -274,6 +274,9 @@ class MessageLayoutRegressionTests(unittest.TestCase):
         view = self.view([self.message(n) for n in range(100)])
         for width, row in ((180, 0), (700, 40), (220, 99), (356, 0)):
             view.resize(width, 450)
+            # Resize schedules a Qt layout pass. Resolve that pass before asking
+            # scrollTo to locate a row using its new width-dependent geometry.
+            self.settle()
             self.assert_geometry(view, self.card(view, row))
             self.assertLess(view.active_editor_count, 20)
             self.assertLess(len(view.findChildren(MessageCard)), 20)
