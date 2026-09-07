@@ -184,7 +184,7 @@ class WindowsUiSmokeTests(unittest.TestCase):
 
         from sindrome_overlay.models import ChatMessage
         from sindrome_overlay.settings import Settings, SettingsStore
-        from sindrome_overlay.ui.overlay import OverlayWindow
+        from sindrome_overlay.ui.virtualized_overlay import OverlayWindow
 
         app = QApplication.instance() or QApplication([])
         with tempfile.TemporaryDirectory() as directory:
@@ -234,8 +234,10 @@ class WindowsUiSmokeTests(unittest.TestCase):
                 )
             )
             app.processEvents()
+            for _ in range(5):
+                app.processEvents()
             self.assertEqual(len(window.messages), 20)
-            self.assertEqual(len(window.cards), 20)
+            self.assertEqual(window.message_model.rowCount(), 20)
             self.assertEqual(window.messages[-1].message_id, "mixed-39")
             self.assertEqual({message.platform for message in window.messages}, {"twitch", "youtube"})
             self.assertEqual(

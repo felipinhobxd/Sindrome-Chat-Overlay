@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import time
 from datetime import datetime
 from pathlib import Path
 
@@ -12,7 +11,6 @@ from PySide6.QtWidgets import QFileDialog, QLabel, QMessageBox, QStackedWidget
 from .. import __version__
 from ..diagnostics import export_diagnostics
 from ..feature_i18n import feature_tr
-from ..filters import should_display
 from ..obs_source import ObsChatSourceServer, ObsSourceConfig
 from ..profiles import (
     apply_overlay_profile,
@@ -23,11 +21,10 @@ from ..profiles import (
 from ..settings import Settings, SettingsStore
 from .feature_settings_dialog import SettingsDialog
 from .message_list import MessageCardDelegate, MessageListModel, VirtualMessageListView
-from .overlay import OverlayWindow as _LegacyOverlayWindow
-from .theme import build_stylesheet
+from .overlay import OverlayShell
 
 
-class OverlayWindow(_LegacyOverlayWindow):
+class OverlayWindow(OverlayShell):
     """Desktop overlay with virtualized messages, OBS source, profiles and diagnostics."""
 
     def __init__(
@@ -74,20 +71,8 @@ class OverlayWindow(_LegacyOverlayWindow):
         if seed_history or port_changed:
             self.obs_source.replace_messages(list(self.messages))
 
-    def _build_ui(self) -> None:
-        # Reuse the mature header/tray/window implementation and replace only the
-        # old QScrollArea + one-QWidget-per-message feed.
-        super()._build_ui()
-
-        old_scroll = self.scroll
-        root_layout = self.centralWidget().layout()
-        insert_at = root_layout.indexOf(old_scroll)
-        old_scroll.viewport().removeEventFilter(self)
-        root_layout.removeWidget(old_scroll)
-        old_scroll.hide()
-        old_scroll.setParent(None)
-        old_scroll.deleteLater()
-
+    def _build_message_area(self, layout) -> None:
+        """Build the virtualized feed; the shell only provides the frame around it."""
         self.message_model = MessageListModel(self)
         self.message_view = VirtualMessageListView(self.message_model, self)
         self.message_view.setObjectName("VirtualMessageList")
@@ -119,16 +104,10 @@ class OverlayWindow(_LegacyOverlayWindow):
         self.message_stack.addWidget(self.empty_state)
         self.message_stack.addWidget(self.message_view)
         self.message_stack.setCurrentWidget(self.empty_state)
-        root_layout.insertWidget(insert_at, self.message_stack, 1)
+        layout.addWidget(self.message_stack, 1)
 
         # Keep the public/legacy scroll attribute used by eventFilter and smoke tests.
         self.scroll = self.message_view
-        # These belonged to the retired QScrollArea feed. They intentionally no
-        # longer own message widgets; visible MessageCards are controlled by the delegate.
-        self.message_host = None
-        self.message_layout = None
-        self.cards.clear()
-        self.cards_by_id.clear()
 
     def _build_tray(self, icon) -> None:
         super()._build_tray(icon)
@@ -277,14 +256,38 @@ class OverlayWindow(_LegacyOverlayWindow):
             },
         }
 
+    # --- Feed hook implementations -----------------------------------------
+
     def _append_card(self, message) -> None:
-        # OverlayWindow.add_message already appended to self.messages before this call.
+        # OverlayShell.add_message already appended to self.messages before this call.
         self.message_model.append_message(message)
         if self.settings.obs_enabled and self.obs_source.running:
             self.obs_source.publish_message(message)
         self._update_empty_state()
         self.message_view.schedule_editor_refresh()
         self._schedule_scroll_to_bottom()
+
+    def _detach_message(self, index: int) -> None:
+        self.message_model.remove_at(index)
+        self.message_view.schedule_editor_refresh()
+
+    def _replace_feed(self, messages) -> None:
+        self.message_delegate.set_settings(self.settings)
+        self.message_model.replace_messages(messages)
+        self.message_view.refresh_virtualization()
+        if messages:
+            self._schedule_scroll_to_bottom()
+
+    def _clear_feed(self, platform: str) -> None:
+        self.obs_source.clear_messages(platform)
+        if not platform:
+            self.message_model.clear()
+
+    def _update_empty_state(self) -> None:
+        if self.messages:
+            self.message_stack.setCurrentWidget(self.message_view)
+        else:
+            self.message_stack.setCurrentWidget(self.empty_state)
 
     def _schedule_scroll_to_bottom(self) -> None:
         if not self.settings.auto_scroll or self._scroll_update_pending:
@@ -308,74 +311,15 @@ class OverlayWindow(_LegacyOverlayWindow):
         if self.settings.auto_scroll:
             self.message_view.verticalScrollBar().setValue(maximum)
 
-    def _expire_messages(self) -> None:
-        lifetime = self.settings.message_lifetime_seconds
-        if lifetime <= 0:
-            return
-        now = time.monotonic()
-        while self.messages:
-            created = self.message_model.created_at(0)
-            if created is None or now - created < lifetime:
-                break
-            # OBS history is intentionally independent from desktop expiry.
-            self._remove_at(0)
-
     def _remove_message_id(self, message_id: str) -> None:
         self.obs_source.remove_message(message_id)
-        index = self.message_model.find_message_id(message_id)
-        if index >= 0:
-            self._remove_at(index)
+        super()._remove_message_id(message_id)
 
     def _remove_author_id(self, author_id: str) -> None:
         # Ban/timeout: drop the banned account's history here and in the OBS
         # browser source.
         self.obs_source.remove_by_author(author_id)
-        for index in range(len(self.messages) - 1, -1, -1):
-            if self.messages[index].author_id == author_id:
-                self._remove_at(index)
-
-    def _remove_at(self, index: int) -> None:
-        if index < 0 or index >= len(self.messages):
-            return
-        self.messages.pop(index)
-        self.message_model.remove_at(index)
-        self._update_empty_state()
-        self.message_view.schedule_editor_refresh()
-
-    def clear_messages(self, platform: str = "") -> None:
-        self.obs_source.clear_messages(platform)
-        if not platform:
-            self.messages.clear()
-            self.message_model.clear()
-            self._update_empty_state()
-            return
-        for index in range(len(self.messages) - 1, -1, -1):
-            if self.messages[index].platform == platform:
-                self._remove_at(index)
-
-    def _rebuild_cards(self) -> None:
-        history = list(self.messages)
-        filtered = [
-            message
-            for message in history[-self.settings.max_messages :]
-            if should_display(message, self.settings)
-        ]
-
-        self.messages[:] = filtered
-        self.cards.clear()
-        self.cards_by_id.clear()
-        self.message_delegate.set_settings(self.settings)
-        self.message_model.replace_messages(filtered)
-        self.message_view.refresh_virtualization()
-        self._update_empty_state()
-        if filtered:
-            self._schedule_scroll_to_bottom()
-
-    def _update_empty_state(self) -> None:
-        if self.messages:
-            self.message_stack.setCurrentWidget(self.message_view)
-        else:
-            self.message_stack.setCurrentWidget(self.empty_state)
+        super()._remove_author_id(author_id)
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self.obs_source.stop()
