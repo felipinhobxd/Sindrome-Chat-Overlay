@@ -16,7 +16,9 @@ import java.util.Map;
 
 /**
  * Runs the third-party emote matching (BTTV/7TV/FFZ) on the real ART runtime
- * so regex tokenisation and index arithmetic match production behaviour.
+ * so token splitting and index arithmetic match production behaviour.
+ * findMatches matches whole whitespace-separated tokens only, so both codes
+ * here are single tokens; native Twitch emote ranges are never replaced.
  */
 @RunWith(AndroidJUnit4.class)
 public class ThirdPartyEmotesInstrumentedTest {
@@ -24,11 +26,11 @@ public class ThirdPartyEmotesInstrumentedTest {
     @Test
     public void matchesThirdPartyCodesOutsideNativeRanges() {
         Map<String, String> codes = Map.of(
-                "S geilO", "https://example.com/sgeilo.png",
+                "SGeilO", "https://example.com/sgeilo.png",
                 "KEKW", "https://example.com/kekw.png");
         List<ChatEmote> nativeEmotes = List.of(new ChatEmote("25", 0, 5, "Kappa"));
         List<ChatEmote> matches = ThirdPartyEmotes.findMatches(
-                "Kappa KEKW S geilO", codes, nativeEmotes);
+                "Kappa KEKW SGeilO", codes, nativeEmotes);
         assertEquals(2, matches.size());
         assertEquals("KEKW", matches.get(0).name);
         assertTrue(matches.get(1).start > matches.get(0).end);

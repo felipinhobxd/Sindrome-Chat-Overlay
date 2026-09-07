@@ -8,6 +8,13 @@ and add the section **before** publishing the version bump.
 
 ## [Unreleased]
 
+### Android
+
+- Fixed the first notification sound after app start being silent: SoundPool
+  decodes samples asynchronously and play requests issued before decoding
+  finished were dropped; the player now bridges that window with the same
+  ToneGenerator fallback used when sample preparation fails.
+
 ### Internal
 
 - CI: the instrumented-test job grants the runner user KVM access (udev rule

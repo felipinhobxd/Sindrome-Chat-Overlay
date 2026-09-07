@@ -16,6 +16,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -26,6 +27,11 @@ import java.util.concurrent.atomic.AtomicLong;
  * streams, so bursts of chat overlap naturally instead of queueing behind a
  * serial MediaPlayer executor (which used to delay sounds by seconds and
  * allocate a new player plus a fresh PCM buffer for every message).
+ *
+ * Because SoundPool decodes asynchronously, a play request for a freshly
+ * loaded sample would otherwise be dropped; play() bridges that window with
+ * the ToneGenerator fallback so the first notification after app start is
+ * always audible.
  */
 public final class NotificationSoundPlayer {
     private static final String TAG = "ChatSound";
@@ -48,6 +54,8 @@ public final class NotificationSoundPlayer {
     private final Context context;
     private final SoundPool soundPool;
     private final Map<String, Integer> soundIds = new ConcurrentHashMap<>();
+    /** SoundPool sample ids whose PCM data finished decoding and can play. */
+    private final Set<Integer> loadedSoundIds = ConcurrentHashMap.newKeySet();
     private final AtomicLong lastPlayed = new AtomicLong(0);
     private volatile boolean released;
 
@@ -57,6 +65,9 @@ public final class NotificationSoundPlayer {
                 .setMaxStreams(4)
                 .setAudioAttributes(mediaAudioAttributes())
                 .build();
+        soundPool.setOnLoadCompleteListener((pool, sampleId, status) -> {
+            if (status == 0) loadedSoundIds.add(sampleId);
+        });
     }
 
     public boolean play(String preset, int volume, int minimumIntervalMs, boolean bypassLimit) {
@@ -82,6 +93,16 @@ public final class NotificationSoundPlayer {
             // SoundPool gain tops out at 1.0; the 100-200% range plays at full
             // sample amplitude instead of digitally clipping further.
             float gain = Math.max(0f, Math.min(1f, safeVolume / 100f));
+            if (!loadedSoundIds.contains(soundId)) {
+                // SoundPool decodes asynchronously: soundPool.play() with an
+                // id whose PCM data is not decoded yet is silently dropped
+                // (it returns stream 0), which used to make the very first
+                // chat sound after app start silent. A sample whose decode
+                // failed never enters loadedSoundIds either, so the same
+                // bridge covers it.
+                playFallbackTone(safeVolume, patternDurationMs(PRESETS.get(safePreset)));
+                return true;
+            }
             return soundPool.play(soundId, gain, gain, 1, 0, 1f) != 0;
         } catch (RuntimeException failure) {
             Log.w(TAG, "SoundPool could not play chat sound; using fallback tone", failure);
