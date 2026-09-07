@@ -82,8 +82,8 @@ public final class ThirdPartyEmotesTest {
     @Test public void nativeEmoteRangeIsNotReplaced() {
         Map<String, String> codes = new HashMap<>();
         codes.put("Kappa", "https://cdn.betterttv.net/emote/x/2x");
-        List<ChatEmote> native = List.of(new ChatEmote("25", 0, 5, "Kappa"));
-        assertTrue(ThirdPartyEmotes.findMatches("Kappa", codes, native).isEmpty());
+        List<ChatEmote> nativeEmotes = List.of(new ChatEmote("25", 0, 5, "Kappa"));
+        assertTrue(ThirdPartyEmotes.findMatches("Kappa", codes, nativeEmotes).isEmpty());
     }
 
     @Test public void augmentAppendsThirdPartyAfterNative() {
