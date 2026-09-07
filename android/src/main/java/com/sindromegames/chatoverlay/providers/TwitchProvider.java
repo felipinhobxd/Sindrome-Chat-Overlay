@@ -1,5 +1,7 @@
 package com.sindromegames.chatoverlay.providers;
 
+import android.util.Log;
+
 import com.sindromegames.chatoverlay.model.ChatEmote;
 import com.sindromegames.chatoverlay.model.ChatMessage;
 
@@ -20,10 +22,12 @@ import java.util.Random;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import javax.net.ssl.SSLParameters;
 import javax.net.ssl.SSLSocket;
 import javax.net.ssl.SSLSocketFactory;
 
 public final class TwitchProvider extends ChatProvider {
+    private static final String TAG = "TwitchProvider";
     private static final Pattern EMOTE_RANGE = Pattern.compile("(\\d+)-(\\d+)");
     private static final long HEARTBEAT_IDLE_MS = 45_000L;
     private static final long HEARTBEAT_GRACE_MS = 12_000L;
@@ -47,8 +51,9 @@ public final class TwitchProvider extends ChatProvider {
             try {
                 listen();
                 delay = 2000;
-            } catch (Exception ignored) {
+            } catch (Exception e) {
                 if (stopped.get()) break;
+                Log.w(TAG, "twitch connection failed, reconnecting", e);
                 callback.onStatus("twitch", "reconnecting", YouTubeMode.STOPPED);
                 if (waitFor(delay)) break;
                 delay = Math.min(delay * 2, 30_000);
@@ -62,6 +67,12 @@ public final class TwitchProvider extends ChatProvider {
         SSLSocket current = (SSLSocket) SSLSocketFactory.getDefault()
                 .createSocket("irc.chat.twitch.tv", 6697);
         current.setSoTimeout(1000);
+        // SSLSocket does not verify the peer hostname by default (unlike
+        // HttpsURLConnection). Without this, a MITM with a valid certificate
+        // issued for any other domain would be accepted.
+        SSLParameters sslParameters = current.getSSLParameters();
+        sslParameters.setEndpointIdentificationAlgorithm("HTTPS");
+        current.setSSLParameters(sslParameters);
         current.startHandshake();
         socket = current;
         writer = new BufferedWriter(new OutputStreamWriter(current.getOutputStream(),
