@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import queue
 import sys
+import threading
 import time
 from collections import deque
 from pathlib import Path
@@ -695,11 +696,26 @@ class OverlayWindow(QMainWindow):
         self.providers.clear()
         for provider in old_providers:
             provider.stop()
-        for provider in old_providers:
+        if old_providers:
+            # join() can block for seconds on a provider stuck in a network
+            # read; reap them on a daemon thread instead of freezing the UI.
+            # Old workers keep their old queue, so any late events they emit
+            # go to a queue nobody reads and cannot corrupt the new state.
+            threading.Thread(
+                target=self._reap_providers,
+                args=(old_providers,),
+                name="sindrome-provider-reaper",
+                daemon=True,
+            ).start()
+
+    @staticmethod
+    def _reap_providers(providers: list[BaseProvider]) -> None:
+        for provider in providers:
+            provider.join(timeout=5.0)
             if provider.is_alive():
-                provider.join(timeout=1.0)
-                if provider.is_alive():
-                    self.log.warning("%s provider did not stop within one second.", provider.platform)
+                logging.getLogger("sindrome_overlay.overlay").warning(
+                    "%s provider did not stop within five seconds.", provider.platform
+                )
 
     def _drain_events(self) -> None:
         for _ in range(100):
