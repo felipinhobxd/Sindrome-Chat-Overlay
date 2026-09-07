@@ -128,6 +128,11 @@ class MessageListModel(QAbstractListModel):
 class MessageCardDelegate(QStyledItemDelegate):
     """Creates real MessageCard widgets only for rows near the viewport."""
 
+    # Height entries are keyed by (message_id, width, settings) and survive
+    # row removals because a message's height does not depend on its position.
+    # The cap bounds memory when long sessions churn through millions of ids.
+    _MAX_HEIGHT_CACHE_ENTRIES = 4096
+
     def __init__(
         self,
         settings: Settings,
@@ -137,7 +142,7 @@ class MessageCardDelegate(QStyledItemDelegate):
         super().__init__(parent)
         self.settings = settings
         self.asset_cache = asset_cache
-        self._height_cache: dict[tuple[int, int, tuple[object, ...]], int] = {}
+        self._height_cache: dict[tuple[str, int, tuple[object, ...]], int] = {}
         self._cached_widths: list[int] = []
         if asset_cache is not None:
             asset_cache.emote_ready.connect(self._asset_layout_changed)
@@ -188,8 +193,7 @@ class MessageCardDelegate(QStyledItemDelegate):
         actual_height = editor.required_height_for_width(width)
         editor.setGeometry(option.rect)
         key = self._cache_key(index, width)
-        previous = self._height_cache.get(key)
-        if previous != actual_height:
+        if key is not None and self._height_cache.get(key) != actual_height:
             self._height_cache[key] = actual_height
             persistent = QPersistentModelIndex(index)
             QTimer.singleShot(0, lambda: self._emit_size_hint_changed(persistent))
@@ -203,7 +207,7 @@ class MessageCardDelegate(QStyledItemDelegate):
             width = view.viewport().width() - 2 * view.spacing()
         width = max(1, width)
         key = self._cache_key(index, width)
-        cached = self._height_cache.get(key)
+        cached = self._height_cache.get(key) if key is not None else None
         if cached is not None:
             return QSize(width, cached)
         message = index.data(MessageListModel.MessageRole)
@@ -289,7 +293,7 @@ class MessageCardDelegate(QStyledItemDelegate):
         # visible, updateEditorGeometry records the exact widget size for that width.
         return max(42, 2 + meta_height + 2 + 3 + body_height + 4 + 3 + 4)
 
-    def _cache_key(self, index: QModelIndex, width: int) -> tuple[int, int, tuple[object, ...]]:
+    def _cache_key(self, index: QModelIndex, width: int) -> tuple[str, int, tuple[object, ...]] | None:
         # Keep the two recent widths so showing/hiding the scrollbar cannot erase
         # exact heights and oscillate forever between short estimates and tall rows.
         # Bounding this also avoids retaining an entry for every pixel of a resize.
@@ -301,7 +305,17 @@ class MessageCardDelegate(QStyledItemDelegate):
                     key: value for key, value in self._height_cache.items() if key[1] != oldest
                 }
         message = index.data(MessageListModel.MessageRole)
-        return (id(message), width, self._settings_signature())
+        message_id = message.message_id if isinstance(message, ChatMessage) else ""
+        # Cache by the stable platform message id. Keying by id(message) was a
+        # correctness bug: CPython may hand a collected object's id() to a
+        # different message, which served a wrong cached height. Messages
+        # without an id simply bypass the cache.
+        if not message_id:
+            return None
+        if len(self._height_cache) > self._MAX_HEIGHT_CACHE_ENTRIES:
+            for stale in list(self._height_cache)[: len(self._height_cache) // 4]:
+                del self._height_cache[stale]
+        return (message_id, width, self._settings_signature())
 
     def _settings_signature(self) -> tuple[object, ...]:
         return (
@@ -349,7 +363,9 @@ class VirtualMessageListView(QListView):
         self.verticalScrollBar().rangeChanged.connect(self.schedule_editor_refresh)
         model.rowsInserted.connect(self.schedule_editor_refresh)
         model.rowsRemoved.connect(self.schedule_editor_refresh)
-        model.rowsRemoved.connect(self._invalidate_heights)
+        # NOTE: heights are keyed by stable message id, so row removals (the
+        # per-message trim after max_messages) do NOT need to clear the cache;
+        # a surviving message's height never depends on its position.
         model.modelReset.connect(self._model_reset)
         QTimer.singleShot(0, self.schedule_editor_refresh)
 
