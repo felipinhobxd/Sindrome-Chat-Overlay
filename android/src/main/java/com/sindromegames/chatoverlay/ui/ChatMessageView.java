@@ -23,6 +23,8 @@ import com.sindromegames.chatoverlay.util.UserColor;
 
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 
 public final class ChatMessageView extends LinearLayout {
@@ -32,6 +34,12 @@ public final class ChatMessageView extends LinearLayout {
     private AppSettings settings;
     private final TextView body;
     private final LinearLayout metadata;
+    // Metadata TextViews are created once per row and reused across binds:
+    // creating a handful of TextViews per bind during fast scroll churns
+    // allocations and janks the overlay.
+    private final List<TextView> metaViews = new ArrayList<>();
+    private int usedMeta;
+    private boolean bodyRenderPending;
 
     public ChatMessageView(Context context) {
         super(context);
@@ -54,36 +62,48 @@ public final class ChatMessageView extends LinearLayout {
     public void bind(ChatMessage message, AppSettings value) {
         bound = message;
         settings = value;
-        metadata.removeAllViews();
+        usedMeta = 0;
+        float metaTextSize = Math.max(10, value.fontSize - 3);
+        float badgeTextSize = Math.max(9, value.fontSize - 5);
         if (value.showPlatform) {
-            TextView platform = meta(message.platform.equals("twitch")
+            TextView platform = nextMeta();
+            platform.setText(message.platform.equals("twitch")
                     ? getContext().getString(R.string.platform_twitch)
                     : getContext().getString(R.string.platform_youtube));
             platform.setTextColor(message.platform.equals("twitch")
                     ? Color.rgb(178, 125, 255) : Color.rgb(255, 90, 105));
+            platform.setTextSize(metaTextSize);
             platform.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-            metadata.addView(platform);
         }
         for (String badgeValue : message.badges) {
-            TextView badge = meta(localizeBadge(badgeValue));
+            TextView badge = nextMeta();
+            badge.setText(localizeBadge(badgeValue));
             badge.setTextColor(Color.rgb(245, 200, 87));
-            badge.setTextSize(Math.max(9, value.fontSize - 5));
-            metadata.addView(badge);
+            badge.setTextSize(badgeTextSize);
+            badge.setTypeface(Typeface.DEFAULT);
         }
-        TextView author = meta(message.author);
+        TextView author = nextMeta();
+        author.setText(message.author);
+        author.setTextSize(metaTextSize);
         author.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         author.setTextColor(UserColor.resolve(message.platform, message.authorId,
                 message.author, message.authorColor));
-        metadata.addView(author);
         if (!message.amount.isEmpty()) {
-            TextView amount = meta(message.amount);
+            TextView amount = nextMeta();
+            amount.setText(message.amount);
+            amount.setTextSize(metaTextSize);
+            amount.setTypeface(Typeface.DEFAULT);
             amount.setTextColor(Color.rgb(78, 225, 160));
-            metadata.addView(amount);
         }
         if (value.showTimestamps) {
-            TextView timestamp = meta(TIME.format(message.timestamp));
+            TextView timestamp = nextMeta();
+            timestamp.setText(TIME.format(message.timestamp));
+            timestamp.setTextSize(metaTextSize);
+            timestamp.setTypeface(Typeface.DEFAULT);
             timestamp.setTextColor(Color.rgb(174, 184, 204));
-            metadata.addView(timestamp);
+        }
+        for (; usedMeta < metaViews.size(); usedMeta++) {
+            metaViews.get(usedMeta).setVisibility(GONE);
         }
         body.setTextSize(value.fontSize);
         renderBody(message);
@@ -92,8 +112,27 @@ public final class ChatMessageView extends LinearLayout {
     public void unbind() {
         bound = null;
         settings = null;
-        metadata.removeAllViews();
+        for (TextView view : metaViews) view.setVisibility(GONE);
         body.setText(null);
+    }
+
+    private TextView nextMeta() {
+        TextView view;
+        if (usedMeta < metaViews.size()) {
+            view = metaViews.get(usedMeta);
+        } else {
+            view = new TextView(getContext());
+            view.setSingleLine(true);
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            params.setMarginEnd(dp(5));
+            view.setLayoutParams(params);
+            metaViews.add(view);
+            metadata.addView(view);
+        }
+        view.setVisibility(VISIBLE);
+        usedMeta++;
+        return view;
     }
 
     private void renderBody(ChatMessage message) {
@@ -117,24 +156,20 @@ public final class ChatMessageView extends LinearLayout {
                 ChatMessage expected = bound;
                 EmoteLoader.get(getContext()).load(expectedEmote, () -> {
                     if (isAttachedToWindow() && bound == expected
-                            && EmoteLoader.get(getContext()).cached(expectedEmote) != null)
-                        renderBody(expected);
+                            && EmoteLoader.get(getContext()).cached(expectedEmote) != null) {
+                        // Several emotes of one message often finish around the
+                        // same time; coalesce to a single re-render per frame.
+                        if (bodyRenderPending) return;
+                        bodyRenderPending = true;
+                        post(() -> {
+                            bodyRenderPending = false;
+                            renderBody(expected);
+                        });
+                    }
                 });
             }
         }
         if (bound == message) body.setText(output);
-    }
-
-    private TextView meta(String value) {
-        TextView view = new TextView(getContext());
-        view.setText(value);
-        view.setTextSize(Math.max(10, settings == null ? 12 : settings.fontSize - 3));
-        view.setSingleLine(true);
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        params.setMarginEnd(dp(5));
-        view.setLayoutParams(params);
-        return view;
     }
 
     private String localizeBadge(String badge) {
