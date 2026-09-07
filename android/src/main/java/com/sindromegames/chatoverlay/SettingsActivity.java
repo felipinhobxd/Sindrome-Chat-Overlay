@@ -191,6 +191,14 @@ public final class SettingsActivity extends AppCompatActivity {
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(56)); saveParams.topMargin = dp(18);
         root.addView(save, saveParams);
         setContentView(scroll);
+        // targetSdk 35 runs edge-to-edge; pad the scroll container by the
+        // system bars so content never draws under them.
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(scroll, (view, insets) -> {
+            androidx.core.graphics.Insets bars = insets.getInsets(
+                    androidx.core.view.WindowInsetsCompat.Type.systemBars());
+            view.setPadding(0, bars.top, 0, bars.bottom);
+            return androidx.core.view.WindowInsetsCompat.CONSUMED;
+        });
         attachListeners();
     }
 
