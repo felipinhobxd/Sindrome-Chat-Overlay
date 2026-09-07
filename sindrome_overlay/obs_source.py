@@ -256,6 +256,14 @@ class _ObsRequestHandler(BaseHTTPRequestHandler):
     server_version = "SindromeOBS/1"
 
     def do_GET(self) -> None:  # noqa: N802 - stdlib HTTP API
+        # DNS-rebinding defence: a hostile web page can resolve a domain it
+        # owns to 127.0.0.1 and then read same-origin responses from this
+        # server (the chat payload). Browsers always send an explicit Host
+        # header, so only the exact loopback host:port this server advertises
+        # is accepted.
+        if not self._host_allowed():
+            self.send_error(403)
+            return
         source: ObsChatSourceServer = self.server.obs_source  # type: ignore[attr-defined]
         parsed = urlsplit(self.path)
         if parsed.path in {"/", "/obs-chat"}:
@@ -279,6 +287,16 @@ class _ObsRequestHandler(BaseHTTPRequestHandler):
             self._send_json({"ok": True, "revision": source.snapshot()["revision"]})
             return
         self.send_error(404)
+
+    def _host_allowed(self) -> bool:
+        host = (self.headers.get("Host") or "").strip().lower()
+        if not host:
+            return False
+        port = self.server.server_address[1]  # type: ignore[attr-defined]
+        allowed = {f"127.0.0.1:{port}", f"localhost:{port}"}
+        if port == 80:
+            allowed.update({"127.0.0.1", "localhost"})
+        return host in allowed
 
     def log_message(self, _format: str, *_args: object) -> None:
         return
