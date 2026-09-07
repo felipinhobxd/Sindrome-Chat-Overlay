@@ -145,12 +145,14 @@ class MessageCardDelegate(QStyledItemDelegate):
         self._height_cache: dict[tuple[str, int, tuple[object, ...]], int] = {}
         self._cached_widths: list[int] = []
         self._asset_refresh_pending = False
+        self._font_cache: tuple[int, tuple[QFont, QFont, QFontMetrics, QFontMetrics]] | None = None
         if asset_cache is not None:
             asset_cache.emote_ready.connect(self._asset_layout_changed)
             asset_cache.badge_ready.connect(self._asset_layout_changed)
 
     def set_settings(self, settings: Settings) -> None:
         self.settings = settings
+        self._font_cache = None
         self.invalidate_height_cache()
 
     def invalidate_height_cache(self) -> None:
@@ -239,13 +241,10 @@ class MessageCardDelegate(QStyledItemDelegate):
         painter.save()
         painter.setClipRect(option.rect, Qt.ClipOperation.IntersectClip)
         rect = option.rect.adjusted(7, 4, -7, -4)
-        base_font = QFont("Segoe UI")
-        base_font.setPixelSize(self.settings.font_size)
-        author_font = QFont(base_font)
-        author_font.setBold(True)
+        _base_font, author_font, _base_metrics, author_metrics = self._fonts()
         painter.setFont(author_font)
         painter.setPen(QColor(message.safe_author_colour))
-        metrics = QFontMetrics(author_font)
+        metrics = author_metrics
         author_height = metrics.lineSpacing()
         painter.drawText(
             QRect(rect.left(), rect.top(), rect.width(), author_height),
@@ -269,9 +268,7 @@ class MessageCardDelegate(QStyledItemDelegate):
         painter.restore()
 
     def _estimate_height(self, message: ChatMessage, width: int) -> int:
-        base_font = QFont("Segoe UI")
-        base_font.setPixelSize(self.settings.font_size)
-        metrics = QFontMetrics(base_font)
+        _base_font, _author_font, metrics, _author_metrics = self._fonts()
         meta_height = metrics.lineSpacing()
         if message.badge_refs:
             meta_height = max(
@@ -317,6 +314,21 @@ class MessageCardDelegate(QStyledItemDelegate):
             for stale in list(self._height_cache)[: len(self._height_cache) // 4]:
                 del self._height_cache[stale]
         return (message_id, width, self._settings_signature())
+
+    def _fonts(self) -> tuple[QFont, QFont, QFontMetrics, QFontMetrics]:
+        """Reusable fonts/metrics: _estimate_height and paint run per visible
+        row, and rebuilding QFont objects for every call wastes allocations
+        during fast scrolling."""
+        cached = self._font_cache
+        if cached is not None and cached[0] == self.settings.font_size:
+            return cached[1]
+        base_font = QFont("Segoe UI")
+        base_font.setPixelSize(self.settings.font_size)
+        author_font = QFont(base_font)
+        author_font.setBold(True)
+        value = (base_font, author_font, QFontMetrics(base_font), QFontMetrics(author_font))
+        self._font_cache = (self.settings.font_size, value)
+        return value
 
     def _settings_signature(self) -> tuple[object, ...]:
         return (
