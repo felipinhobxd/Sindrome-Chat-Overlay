@@ -49,7 +49,6 @@ from ..updates import (
     UpdateDownloader,
     UpdateDownloadResult,
     UpdateInfo,
-    sha256_matches,
 )
 from ..win32 import WindowsGlobalHotkey, WindowsOverlayController, native_message_values
 from .message_card import MessageCard
@@ -351,7 +350,10 @@ class OverlayWindow(QMainWindow):
 
     def _show_install_prompt(self, result: UpdateDownloadResult) -> None:
         installer_path = result.installer_path
-        if installer_path is None or not sha256_matches(installer_path, result.sha256):
+        # The worker thread hash-verified these exact bytes right before
+        # publishing the result; re-hashing here would freeze the UI reading
+        # up to 250 MB from disk.
+        if installer_path is None or not result.verified:
             self._show_update_failure(
                 UpdateDownloadResult(
                     status="error",
@@ -372,7 +374,10 @@ class OverlayWindow(QMainWindow):
         prompt.exec()
         if prompt.clickedButton() is not install_button:
             return
-        if not sha256_matches(installer_path, result.sha256):
+        # Cheap change detection before launch: the download was
+        # hash-verified in the worker, so a size/mtime mismatch means the
+        # file was touched after the verified snapshot and must not launch.
+        if not self._installer_unchanged_since_download(installer_path, result):
             self._show_update_failure(
                 UpdateDownloadResult(
                     status="error",
@@ -396,6 +401,17 @@ class OverlayWindow(QMainWindow):
             )
             return
         QTimer.singleShot(0, self.close)
+
+    @staticmethod
+    def _installer_unchanged_since_download(installer_path, result: UpdateDownloadResult) -> bool:
+        try:
+            stat = installer_path.stat()
+        except OSError:
+            return False
+        return (
+            stat.st_size == result.file_size
+            and stat.st_mtime_ns == result.file_mtime_ns
+        )
 
     def _show_update_failure(self, result: UpdateDownloadResult) -> None:
         error_keys = {
