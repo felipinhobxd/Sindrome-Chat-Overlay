@@ -138,6 +138,7 @@ class MessageCardDelegate(QStyledItemDelegate):
         self.settings = settings
         self.asset_cache = asset_cache
         self._height_cache: dict[tuple[int, int, tuple[object, ...]], int] = {}
+        self._cached_widths: list[int] = []
         if asset_cache is not None:
             asset_cache.emote_ready.connect(self._asset_layout_changed)
             asset_cache.badge_ready.connect(self._asset_layout_changed)
@@ -148,6 +149,7 @@ class MessageCardDelegate(QStyledItemDelegate):
 
     def invalidate_height_cache(self) -> None:
         self._height_cache.clear()
+        self._cached_widths.clear()
 
     def createEditor(  # noqa: N802 - Qt API
         self,
@@ -160,6 +162,8 @@ class MessageCardDelegate(QStyledItemDelegate):
             return None
         card = MessageCard(message, self.settings, self.asset_cache, parent)
         card.setAutoFillBackground(False)
+        persistent = QPersistentModelIndex(index)
+        card.layout_changed.connect(lambda: self._emit_size_hint_changed(persistent))
         return card
 
     def setEditorData(self, editor: QWidget, index: QModelIndex) -> None:  # noqa: N802
@@ -176,22 +180,16 @@ class MessageCardDelegate(QStyledItemDelegate):
         option: QStyleOptionViewItem,
         index: QModelIndex,
     ) -> None:
-        editor.setGeometry(option.rect)
         if not isinstance(editor, MessageCard):
+            editor.setGeometry(option.rect)
             return
         editor.ensurePolished()
-        layout = editor.layout()
-        if layout is not None:
-            layout.activate()
-        width = max(80, option.rect.width())
-        actual_height = max(
-            1,
-            editor.sizeHint().height(),
-            editor.required_height_for_width(width),
-        )
+        width = max(1, option.rect.width())
+        actual_height = editor.required_height_for_width(width)
+        editor.setGeometry(option.rect)
         key = self._cache_key(index, width)
         previous = self._height_cache.get(key)
-        if previous is None or abs(previous - actual_height) > 1:
+        if previous != actual_height:
             self._height_cache[key] = actual_height
             persistent = QPersistentModelIndex(index)
             QTimer.singleShot(0, lambda: self._emit_size_hint_changed(persistent))
@@ -200,8 +198,10 @@ class MessageCardDelegate(QStyledItemDelegate):
         view = self.parent()
         width = option.rect.width()
         if isinstance(view, QListView):
-            width = max(width, view.viewport().width() - 2)
-        width = max(120, width)
+            # QListView removes spacing on both sides of each item. Measurement
+            # and updateEditorGeometry must use the same width/cache key.
+            width = view.viewport().width() - 2 * view.spacing()
+        width = max(1, width)
         key = self._cache_key(index, width)
         cached = self._height_cache.get(key)
         if cached is not None:
@@ -232,6 +232,7 @@ class MessageCardDelegate(QStyledItemDelegate):
         if not isinstance(message, ChatMessage):
             return
         painter.save()
+        painter.setClipRect(option.rect, Qt.ClipOperation.IntersectClip)
         rect = option.rect.adjusted(7, 4, -7, -4)
         base_font = QFont("Segoe UI")
         base_font.setPixelSize(self.settings.font_size)
@@ -244,7 +245,7 @@ class MessageCardDelegate(QStyledItemDelegate):
         painter.drawText(
             QRect(rect.left(), rect.top(), rect.width(), author_height),
             int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop),
-            message.author,
+            metrics.elidedText(message.author, Qt.TextElideMode.ElideRight, rect.width()),
         )
         body_top = rect.top() + author_height + 3
         body_rect = QRect(rect.left(), body_top, rect.width(), max(1, rect.bottom() - body_top + 1))
@@ -256,7 +257,8 @@ class MessageCardDelegate(QStyledItemDelegate):
         painter.setPen(QColor("#F5F7FB"))
         painter.drawText(
             body_rect.adjusted(7, 3, -7, -4),
-            int(Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop),
+            int(Qt.TextFlag.TextWordWrap | Qt.TextFlag.TextWrapAnywhere
+                | Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop),
             message.text,
         )
         painter.restore()
@@ -272,10 +274,11 @@ class MessageCardDelegate(QStyledItemDelegate):
                 max(18, min(32, round(self.settings.font_size * 1.25))),
             )
 
-        available_text_width = max(80, width - 34)
+        available_text_width = max(1, width - 20)
         text_rect = metrics.boundingRect(
             QRect(0, 0, available_text_width, 100_000),
-            int(Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignLeft),
+            int(Qt.TextFlag.TextWordWrap | Qt.TextFlag.TextWrapAnywhere
+                | Qt.AlignmentFlag.AlignLeft),
             message.text or " ",
         )
         body_height = max(metrics.lineSpacing(), text_rect.height())
@@ -287,6 +290,16 @@ class MessageCardDelegate(QStyledItemDelegate):
         return max(42, 2 + meta_height + 2 + 3 + body_height + 4 + 3 + 4)
 
     def _cache_key(self, index: QModelIndex, width: int) -> tuple[int, int, tuple[object, ...]]:
+        # Keep the two recent widths so showing/hiding the scrollbar cannot erase
+        # exact heights and oscillate forever between short estimates and tall rows.
+        # Bounding this also avoids retaining an entry for every pixel of a resize.
+        if width not in self._cached_widths:
+            self._cached_widths.append(width)
+            if len(self._cached_widths) > 2:
+                oldest = self._cached_widths.pop(0)
+                self._height_cache = {
+                    key: value for key, value in self._height_cache.items() if key[1] != oldest
+                }
         message = index.data(MessageListModel.MessageRole)
         return (id(message), width, self._settings_signature())
 
@@ -321,6 +334,7 @@ class VirtualMessageListView(QListView):
         super().__init__(parent)
         self._open_editors: list[QPersistentModelIndex] = []
         self._refresh_pending = False
+        self._relayout_pending = False
         self._buffer_pixels = 120
         self.setModel(model)
         self.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
@@ -335,6 +349,7 @@ class VirtualMessageListView(QListView):
         self.verticalScrollBar().rangeChanged.connect(self.schedule_editor_refresh)
         model.rowsInserted.connect(self.schedule_editor_refresh)
         model.rowsRemoved.connect(self.schedule_editor_refresh)
+        model.rowsRemoved.connect(self._invalidate_heights)
         model.modelReset.connect(self._model_reset)
         QTimer.singleShot(0, self.schedule_editor_refresh)
 
@@ -357,23 +372,31 @@ class VirtualMessageListView(QListView):
         self.schedule_editor_refresh()
 
     def relayout_visible_items(self) -> None:
+        # Asset signals reach the delegate before the individual cards. Measure
+        # on the next event turn, after all badges/emotes have changed, and merge
+        # bursts of notifications into a single relayout.
+        if not self._relayout_pending:
+            self._relayout_pending = True
+            QTimer.singleShot(0, self._relayout_items)
+
+    def _invalidate_heights(self, *_args) -> None:
         delegate = self.itemDelegate()
         if isinstance(delegate, MessageCardDelegate):
             delegate.invalidate_height_cache()
+
+    def _relayout_items(self) -> None:
+        self._relayout_pending = False
         self.doItemsLayout()
         self.schedule_editor_refresh()
         self.viewport().update()
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API
-        delegate = self.itemDelegate()
-        if isinstance(delegate, MessageCardDelegate):
-            delegate.invalidate_height_cache()
         super().resizeEvent(event)
-        QTimer.singleShot(0, self.doItemsLayout)
-        self.schedule_editor_refresh()
+        self.relayout_visible_items()
 
     def _model_reset(self) -> None:
         self._open_editors.clear()
+        self._invalidate_heights()
         self.schedule_editor_refresh()
 
     def _refresh_virtual_editors(self) -> None:
