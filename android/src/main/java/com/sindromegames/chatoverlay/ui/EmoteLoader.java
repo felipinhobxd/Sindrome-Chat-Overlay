@@ -30,6 +30,11 @@ import okhttp3.Response;
 
 public final class EmoteLoader {
     private static final long MAX_IMAGE_BYTES = 512_000L;
+    // Emotes are rendered at ~28-56 px; anything decoded above this is a waste
+    // of memory. Natural (compressed) bounds above MAX_NATURAL_* are rejected.
+    private static final int MAX_DECODED_DIMENSION = 256;
+    private static final int MAX_NATURAL_DIMENSION = 1024;
+    private static final int PRUNE_EVERY_DOWNLOADS = 32;
     private static volatile EmoteLoader instance;
     private final LruCache<String, Bitmap> memory = new LruCache<>(memoryCacheSizeKb()) {
         @Override protected int sizeOf(String key, Bitmap value) {
@@ -45,6 +50,8 @@ public final class EmoteLoader {
     private final Handler main = new Handler(Looper.getMainLooper());
     private final OkHttpClient http = new OkHttpClient();
     private final File cacheDirectory;
+    // Only touched from the single-threaded executor.
+    private int downloadsSincePrune;
 
     private EmoteLoader(Context context) {
         cacheDirectory = new File(context.getApplicationContext().getCacheDir(), "chat-emotes");
@@ -97,7 +104,7 @@ public final class EmoteLoader {
         File file = new File(cacheDirectory, safeFileName(key) + ".png");
         try {
             if (file.isFile() && file.length() > 0 && file.length() <= MAX_IMAGE_BYTES)
-                bitmap = BitmapFactory.decodeFile(file.getAbsolutePath());
+                bitmap = decodeSafely(readFile(file));
             if (bitmap == null) {
                 try (Response response = http.newCall(new Request.Builder().url(url).build()).execute()) {
                     if (response.isSuccessful() && response.body() != null) {
@@ -105,14 +112,11 @@ public final class EmoteLoader {
                         if (length < 0 || length <= MAX_IMAGE_BYTES) {
                             byte[] data = response.body().bytes();
                             if (data.length <= MAX_IMAGE_BYTES) {
-                                bitmap = BitmapFactory.decodeByteArray(data, 0, data.length);
-                                if (bitmap != null && bitmap.getWidth() <= 1024 && bitmap.getHeight() <= 1024
-                                        && (long) bitmap.getWidth() * bitmap.getHeight() <= 1_048_576L) {
+                                bitmap = decodeSafely(data);
+                                if (bitmap != null) {
                                     try (FileOutputStream output = new FileOutputStream(file)) {
                                         output.write(data);
                                     }
-                                } else {
-                                    bitmap = null;
                                 }
                             }
                         }
@@ -123,10 +127,65 @@ public final class EmoteLoader {
             bitmap = null;
         }
         if (bitmap != null) memory.put(key, bitmap);
-        pruneDiskCache();
+        if (++downloadsSincePrune >= PRUNE_EVERY_DOWNLOADS) {
+            downloadsSincePrune = 0;
+            pruneDiskCache();
+        }
         List<Runnable> callbacks;
         synchronized (pending) { callbacks = pending.remove(key); }
         if (callbacks != null) for (Runnable callback : callbacks) main.post(callback);
+    }
+
+    private static byte[] readFile(File file) {
+        byte[] data = new byte[(int) Math.min(file.length(), MAX_IMAGE_BYTES)];
+        try (java.io.FileInputStream input = new java.io.FileInputStream(file)) {
+            int read = 0;
+            while (read < data.length) {
+                int chunk = input.read(data, read, data.length - read);
+                if (chunk < 0) break;
+                read += chunk;
+            }
+            return read == data.length ? data : java.util.Arrays.copyOf(data, read);
+        } catch (IOException | RuntimeException ignored) {
+            return null;
+        }
+    }
+
+    /**
+     * Decodes image data without ever allocating an unbounded bitmap. A 512 KB
+     * PNG can legitimately decode to 4096x4096 (~64 MB); bounds are checked
+     * first, the bitmap is downsampled with inSampleSize, and OutOfMemoryError
+     * (an Error, not an Exception) is contained so a hostile image can never
+     * crash the overlay process.
+     */
+    private static Bitmap decodeSafely(byte[] data) {
+        if (data == null || data.length == 0) return null;
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        BitmapFactory.decodeByteArray(data, 0, data.length, bounds);
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null;
+        if (bounds.outWidth > MAX_NATURAL_DIMENSION || bounds.outHeight > MAX_NATURAL_DIMENSION
+                || (long) bounds.outWidth * bounds.outHeight > 1_048_576L) return null;
+        BitmapFactory.Options options = new BitmapFactory.Options();
+        options.inSampleSize = sampleSize(bounds.outWidth, bounds.outHeight);
+        try {
+            return BitmapFactory.decodeByteArray(data, 0, data.length, options);
+        } catch (OutOfMemoryError ignored) {
+            BitmapFactory.Options reduced = new BitmapFactory.Options();
+            reduced.inSampleSize = options.inSampleSize * 4;
+            try {
+                return BitmapFactory.decodeByteArray(data, 0, data.length, reduced);
+            } catch (OutOfMemoryError again) {
+                return null;
+            }
+        }
+    }
+
+    private static int sampleSize(int width, int height) {
+        int sample = 1;
+        while (width / (sample * 2) >= MAX_DECODED_DIMENSION
+                && height / (sample * 2) >= MAX_DECODED_DIMENSION) sample *= 2;
+        return sample;
     }
 
     private static String emoteUrl(ChatEmote emote) {
