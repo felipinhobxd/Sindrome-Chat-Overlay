@@ -76,6 +76,8 @@
     <string name="show_platform">Mostrar Twitch / YouTube</string>
     <string name="hide_commands">Ocultar mensagens que começam com !</string>
     <string name="third_party_emotes">Usar emotes do BetterTTV, 7TV e FrankerFaceZ</string>
+    <string name="hidden_users_hint">Usuários ocultos (separados por vírgula)</string>
+    <string name="hidden_words_hint">Palavras ou frases ocultas (separadas por vírgula)</string>
     <string name="sound">Som</string>
     <string name="enable_sound">Tocar um som para mensagens novas</string>
     <string name="volume">Volume: %1$d%%</string>

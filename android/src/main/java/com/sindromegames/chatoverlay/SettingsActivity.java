@@ -50,7 +50,7 @@ public final class SettingsActivity extends AppCompatActivity {
     private CheckBox thirdPartyEmotes;
     private CheckBox twitchEnabled, youtubeEnabled, autoScroll, showTimestamps, showPlatform,
             hideCommands, soundEnabled;
-    private EditText twitchChannel, youtubeInput, apiKey;
+    private EditText twitchChannel, youtubeInput, apiKey, hiddenUsers, hiddenWords;
     private TextView modeTitle, modeDetail, opacityLabel, fontLabel, maximumLabel,
             volumeLabel, intervalLabel;
     private LinearLayout advanced;
@@ -158,6 +158,10 @@ public final class SettingsActivity extends AppCompatActivity {
         showTimestamps = check(R.string.show_timestamps); root.addView(showTimestamps);
         showPlatform = check(R.string.show_platform); root.addView(showPlatform);
         thirdPartyEmotes = check(R.string.third_party_emotes); root.addView(thirdPartyEmotes);
+        root.addView(label(R.string.hidden_users_hint));
+        hiddenUsers = field(R.string.hidden_users_hint, false); root.addView(hiddenUsers);
+        root.addView(label(R.string.hidden_words_hint));
+        hiddenWords = field(R.string.hidden_words_hint, false); root.addView(hiddenWords);
         hideCommands = check(R.string.hide_commands); root.addView(hideCommands);
 
         root.addView(sectionTitle(R.string.sound));
@@ -201,6 +205,8 @@ public final class SettingsActivity extends AppCompatActivity {
         autoScroll.setChecked(settings.autoScroll); showTimestamps.setChecked(settings.showTimestamps);
         showPlatform.setChecked(settings.showPlatform); hideCommands.setChecked(settings.hideCommands);
         thirdPartyEmotes.setChecked(settings.thirdPartyEmotes);
+        hiddenUsers.setText(settings.hiddenUsers);
+        hiddenWords.setText(settings.hiddenWords);
         soundEnabled.setChecked(settings.soundEnabled); volume.setProgress(settings.soundVolume);
         twitchSound.setSelection(soundPosition(settings.twitchSound));
         youtubeSound.setSelection(soundPosition(settings.youtubeSound));
@@ -291,6 +297,8 @@ public final class SettingsActivity extends AppCompatActivity {
         settings.autoScroll = autoScroll.isChecked(); settings.showTimestamps = showTimestamps.isChecked();
         settings.showPlatform = showPlatform.isChecked(); settings.hideCommands = hideCommands.isChecked();
         settings.thirdPartyEmotes = thirdPartyEmotes.isChecked();
+        settings.hiddenUsers = hiddenUsers.getText().toString().trim();
+        settings.hiddenWords = hiddenWords.getText().toString().trim();
         settings.soundEnabled = soundEnabled.isChecked(); settings.soundVolume = volume.getProgress();
         settings.twitchSound = soundId(twitchSound.getSelectedItemPosition());
         settings.youtubeSound = soundId(youtubeSound.getSelectedItemPosition());

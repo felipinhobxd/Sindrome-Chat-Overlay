@@ -16,6 +16,7 @@ import com.sindromegames.chatoverlay.util.UrlNormalizer;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Locale;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -123,6 +124,27 @@ public final class ChatEngine {
             return generation.get() == expectedGeneration;
         }
 
+        /** Central display filter: commands, hidden users and hidden words. */
+        private boolean isFiltered(ChatMessage message, AppSettings current) {
+            if (current.hideCommands && message.text.startsWith("!")) return true;
+            String author = message.author == null ? "" : message.author.toLowerCase(Locale.ROOT);
+            if (current.hiddenUsers != null && !current.hiddenUsers.isEmpty()) {
+                for (String raw : current.hiddenUsers.split("[,\n]")) {
+                    String entry = raw.trim().toLowerCase(Locale.ROOT);
+                    if (entry.isEmpty()) continue;
+                    if (entry.equals(author) || entry.equals(message.authorId)) return true;
+                }
+            }
+            if (current.hiddenWords != null && !current.hiddenWords.isEmpty()) {
+                String text = message.text == null ? "" : message.text.toLowerCase(Locale.ROOT);
+                for (String raw : current.hiddenWords.split("[,\n]")) {
+                    String entry = raw.trim().toLowerCase(Locale.ROOT);
+                    if (!entry.isEmpty() && text.contains(entry)) return true;
+                }
+            }
+            return false;
+        }
+
         @Override public void onMessage(ChatMessage message) {
             if (message == null) return;
             // No engine lock here: this runs for every chat message and the
@@ -131,7 +153,7 @@ public final class ChatEngine {
             // volatile, and ChatBus/sounds are internally thread-safe.
             if (!active()) return;
             AppSettings current = settings;
-            if (current.hideCommands && message.text.startsWith("!")) return;
+            if (isFiltered(message, current)) return;
             ChatBus.publish(message);
             if (current.soundEnabled) {
                 String preset = message.platform.equals("twitch")
