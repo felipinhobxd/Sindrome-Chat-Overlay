@@ -5,15 +5,45 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.time.Instant;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public final class JsonTools {
     private static final Pattern VIDEO_ID = Pattern.compile("^[A-Za-z0-9_-]{11}$");
+    // ytInitialData paths stay well below this; the cap only exists so that a
+    // hostile deep-nested payload can never recurse deep enough to overflow
+    // the Java call stack (StackOverflowError would escape every catch and
+    // kill the process).
+    private static final int MAX_TRAVERSAL_DEPTH = 128;
 
     private JsonTools() {}
+
+    private record Frame(Object node, int depth) {}
+
+    private static void pushChildren(Frame frame, Deque<Frame> stack) {
+        if (frame.depth() >= MAX_TRAVERSAL_DEPTH) return;
+        List<Object> children = new ArrayList<>();
+        if (frame.node() instanceof JSONObject object) {
+            Iterator<String> keys = object.keys();
+            while (keys.hasNext()) children.add(object.opt(keys.next()));
+        } else if (frame.node() instanceof JSONArray array) {
+            for (int index = 0; index < array.length(); index++) children.add(array.opt(index));
+        } else {
+            return;
+        }
+        // Push reversed so the stack pops children in the original DFS order.
+        for (int index = children.size() - 1; index >= 0; index--) {
+            Object child = children.get(index);
+            if (child instanceof JSONObject || child instanceof JSONArray)
+                stack.push(new Frame(child, frame.depth() + 1));
+        }
+    }
 
     public static JSONObject extractObject(String text, String marker) {
         if (text == null || marker == null) return null;
@@ -43,43 +73,37 @@ public final class JsonTools {
     }
 
     public static Object findFirst(Object node, String key) {
-        if (node instanceof JSONObject object) {
-            if (object.has(key) && !object.isNull(key)) return object.opt(key);
-            Iterator<String> keys = object.keys();
-            while (keys.hasNext()) {
-                Object result = findFirst(object.opt(keys.next()), key);
-                if (result != null) return result;
+        if (!(node instanceof JSONObject || node instanceof JSONArray)) return null;
+        Deque<Frame> stack = new ArrayDeque<>();
+        stack.push(new Frame(node, 0));
+        while (!stack.isEmpty()) {
+            Frame frame = stack.pop();
+            if (frame.node() instanceof JSONObject object) {
+                if (object.has(key) && !object.isNull(key)) return object.opt(key);
             }
-        } else if (node instanceof JSONArray array) {
-            for (int index = 0; index < array.length(); index++) {
-                Object result = findFirst(array.opt(index), key);
-                if (result != null) return result;
-            }
+            pushChildren(frame, stack);
         }
         return null;
     }
 
     public static String findLiveVideoId(Object node) {
-        if (node instanceof JSONObject object) {
-            String candidate = object.optString("videoId", "");
-            if (VIDEO_ID.matcher(candidate).matches()) {
-                String snapshot = object.toString();
-                if (snapshot.contains("\"isLiveNow\":true")
-                        || snapshot.contains("BADGE_STYLE_TYPE_LIVE_NOW")
-                        || snapshot.contains("\"style\":\"LIVE\"")
-                        || snapshot.toUpperCase(Locale.ROOT).contains("LIVE NOW")
-                        || snapshot.toUpperCase(Locale.ROOT).contains("AO VIVO")) return candidate;
+        if (!(node instanceof JSONObject || node instanceof JSONArray)) return "";
+        Deque<Frame> stack = new ArrayDeque<>();
+        stack.push(new Frame(node, 0));
+        while (!stack.isEmpty()) {
+            Frame frame = stack.pop();
+            if (frame.node() instanceof JSONObject object) {
+                String candidate = object.optString("videoId", "");
+                if (VIDEO_ID.matcher(candidate).matches()) {
+                    String snapshot = object.toString();
+                    if (snapshot.contains("\"isLiveNow\":true")
+                            || snapshot.contains("BADGE_STYLE_TYPE_LIVE_NOW")
+                            || snapshot.contains("\"style\":\"LIVE\"")
+                            || snapshot.toUpperCase(Locale.ROOT).contains("LIVE NOW")
+                            || snapshot.toUpperCase(Locale.ROOT).contains("AO VIVO")) return candidate;
+                }
             }
-            Iterator<String> keys = object.keys();
-            while (keys.hasNext()) {
-                String result = findLiveVideoId(object.opt(keys.next()));
-                if (!result.isEmpty()) return result;
-            }
-        } else if (node instanceof JSONArray array) {
-            for (int index = 0; index < array.length(); index++) {
-                String result = findLiveVideoId(array.opt(index));
-                if (!result.isEmpty()) return result;
-            }
+            pushChildren(frame, stack);
         }
         return "";
     }
