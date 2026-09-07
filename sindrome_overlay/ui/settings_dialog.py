@@ -219,6 +219,8 @@ class SettingsDialog(QDialog):
         self.show_platform.setChecked(self._current.show_platform_labels)
         self.hide_commands = QCheckBox(self._text("hide_commands"))
         self.hide_commands.setChecked(self._current.hide_commands)
+        self.third_party_emotes = QCheckBox(self._text("third_party_emotes"))
+        self.third_party_emotes.setChecked(self._current.third_party_emotes)
 
         self.background_opacity, background_row = self._slider_row(self._current.background_opacity)
         self.card_opacity, card_row = self._slider_row(self._current.card_opacity)
@@ -250,6 +252,7 @@ class SettingsDialog(QDialog):
         form.addRow(self.show_timestamps)
         form.addRow(self.show_platform)
         form.addRow(self.hide_commands)
+        form.addRow(self.third_party_emotes)
         return tab
 
     def _sound_tab(self) -> QWidget:
@@ -394,6 +397,7 @@ class SettingsDialog(QDialog):
             show_timestamps=self.show_timestamps.isChecked(),
             show_platform_labels=self.show_platform.isChecked(),
             hide_commands=self.hide_commands.isChecked(),
+            third_party_emotes=self.third_party_emotes.isChecked(),
             window_x=self._current.window_x,
             window_y=self._current.window_y,
             window_width=self._current.window_width,
@@ -425,6 +429,7 @@ class SettingsDialog(QDialog):
         self.show_timestamps.setChecked(defaults.show_timestamps)
         self.show_platform.setChecked(defaults.show_platform_labels)
         self.hide_commands.setChecked(defaults.hide_commands)
+        self.third_party_emotes.setChecked(defaults.third_party_emotes)
 
     def _toggle_youtube_advanced(self, expanded: bool) -> None:
         self.youtube_advanced_panel.setVisible(expanded)

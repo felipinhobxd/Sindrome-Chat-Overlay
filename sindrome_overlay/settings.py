@@ -58,6 +58,7 @@ class Settings:
     show_timestamps: bool = True
     show_platform_labels: bool = True
     hide_commands: bool = False
+    third_party_emotes: bool = True
     window_x: int = 40
     window_y: int = 80
     window_width: int = 440

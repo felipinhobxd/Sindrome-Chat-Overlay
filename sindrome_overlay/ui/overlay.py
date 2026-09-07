@@ -667,6 +667,7 @@ class OverlayWindow(QMainWindow):
                 self.events,
                 self.settings.twitch_channel,
                 self.settings.language,
+                third_party_emotes=self.settings.third_party_emotes,
             )
             self.providers.append(provider)
             provider.start()
