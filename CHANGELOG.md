@@ -6,6 +6,26 @@ section below is copied verbatim into the matching GitHub Release by the
 build workflow, so keep one `## [x.y.z] - YYYY-MM-DD` section per version
 and add the section **before** publishing the version bump.
 
+## [Unreleased]
+
+### Android
+
+- Fixed the first notification sound after app start being silent: SoundPool
+  decodes samples asynchronously and play requests issued before decoding
+  finished were dropped; the player now bridges that window with the same
+  ToneGenerator fallback used when sample preparation fails.
+
+### Internal
+
+- CI: the instrumented-test job grants the runner user KVM access (udev rule
+  for `/dev/kvm`), boots a `google_apis` API 30 emulator with animations
+  disabled, a 10-minute boot timeout and test-report upload on failure; the
+  previous setup silently fell back to software emulation and never reached
+  the test phase.
+- Overlay window instrumented tests proxy window mutations to the main thread
+  (`runOnMainSync`), because `WindowManager.addView` requires a Looper that
+  the instrumentation thread does not have.
+
 ## [1.9.0] - 2026-09-07
 
 ### Desktop

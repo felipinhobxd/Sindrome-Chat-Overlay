@@ -13,6 +13,7 @@ SHA256SUMS.txt
 assets/app.ico
 assets/icon.png
 android/.gradle/
+.gradle/
 android/build/
 android/local.properties
 *.jks

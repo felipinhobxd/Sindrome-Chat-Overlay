@@ -176,14 +176,41 @@ jobs:
           gradle-version: "8.10.2"
           cache-provider: basic
 
+      - name: Enable KVM group perms
+        # Hosted runners ship /dev/kvm with root:kvm ownership, but the
+        # runner user is not in the kvm group; without this rule QEMU
+        # silently falls back to software emulation and the emulator never
+        # boots (adb reports "device offline" until the boot timeout).
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -al /dev/kvm
+
       - name: Run instrumented tests on an emulator
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.34.0
         with:
           api-level: 30
+          # google_apis is the battle-tested CI image; the AOSP "default"
+          # image for API 30 hangs its shell on hosted runners and the run
+          # dies with ShellCommandUnresponsiveException before any test.
+          target: google_apis
           arch: x86_64
+          disable-animations: true
+          emulator-boot-timeout: 600
           script: |
             adb shell appops set com.sindromegames.chatoverlay SYSTEM_ALERT_WINDOW allow || true
             gradle :android:connectedDebugAndroidTest --stacktrace
+
+      - name: Upload instrumented test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: android-instrumented-test-reports
+          path: |
+            android/build/reports/androidTests/
+            android/build/outputs/androidTest-results/
+          if-no-files-found: ignore
 
   publish-android:
     needs: build-android
