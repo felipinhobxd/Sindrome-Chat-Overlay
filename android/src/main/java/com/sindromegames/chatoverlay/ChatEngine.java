@@ -50,7 +50,9 @@ public final class ChatEngine {
                 ArrayList<ChatProvider> next = new ArrayList<>(2);
                 if (settings.twitchEnabled) {
                     String channel = UrlNormalizer.twitchChannel(settings.twitchChannel);
-                    if (!channel.isEmpty()) next.add(new TwitchProvider(callback, channel));
+                    if (!channel.isEmpty()) {
+                        next.add(new TwitchProvider(callback, channel, settings.thirdPartyEmotes));
+                    }
                 }
                 if (settings.youtubeEnabled) {
                     String input = UrlNormalizer.youtubeInput(settings.youtubeInput);

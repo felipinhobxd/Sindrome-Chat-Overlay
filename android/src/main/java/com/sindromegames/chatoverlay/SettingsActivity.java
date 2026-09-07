@@ -47,6 +47,7 @@ public final class SettingsActivity extends AppCompatActivity {
     private Runnable pendingValidation;
 
     private Spinner language;
+    private CheckBox thirdPartyEmotes;
     private CheckBox twitchEnabled, youtubeEnabled, autoScroll, showTimestamps, showPlatform,
             hideCommands, soundEnabled;
     private EditText twitchChannel, youtubeInput, apiKey;
@@ -156,6 +157,7 @@ public final class SettingsActivity extends AppCompatActivity {
         autoScroll = check(R.string.auto_scroll); root.addView(autoScroll);
         showTimestamps = check(R.string.show_timestamps); root.addView(showTimestamps);
         showPlatform = check(R.string.show_platform); root.addView(showPlatform);
+        thirdPartyEmotes = check(R.string.third_party_emotes); root.addView(thirdPartyEmotes);
         hideCommands = check(R.string.hide_commands); root.addView(hideCommands);
 
         root.addView(sectionTitle(R.string.sound));
@@ -198,6 +200,7 @@ public final class SettingsActivity extends AppCompatActivity {
         maximum.setProgress((settings.maxMessages - 20) / 10);
         autoScroll.setChecked(settings.autoScroll); showTimestamps.setChecked(settings.showTimestamps);
         showPlatform.setChecked(settings.showPlatform); hideCommands.setChecked(settings.hideCommands);
+        thirdPartyEmotes.setChecked(settings.thirdPartyEmotes);
         soundEnabled.setChecked(settings.soundEnabled); volume.setProgress(settings.soundVolume);
         twitchSound.setSelection(soundPosition(settings.twitchSound));
         youtubeSound.setSelection(soundPosition(settings.youtubeSound));
@@ -287,6 +290,7 @@ public final class SettingsActivity extends AppCompatActivity {
         settings.maxMessages = maximum.getProgress() * 10 + 20;
         settings.autoScroll = autoScroll.isChecked(); settings.showTimestamps = showTimestamps.isChecked();
         settings.showPlatform = showPlatform.isChecked(); settings.hideCommands = hideCommands.isChecked();
+        settings.thirdPartyEmotes = thirdPartyEmotes.isChecked();
         settings.soundEnabled = soundEnabled.isChecked(); settings.soundVolume = volume.getProgress();
         settings.twitchSound = soundId(twitchSound.getSelectedItemPosition());
         settings.youtubeSound = soundId(youtubeSound.getSelectedItemPosition());

@@ -222,6 +222,9 @@ public final class EmoteLoader {
         if (url == null || !url.isHttps()) return false;
         String host = url.host().toLowerCase(Locale.ROOT);
         return host.equals("static-cdn.jtvnw.net")
+                || host.equals("cdn.betterttv.net")
+                || host.equals("cdn.7tv.app")
+                || host.equals("cdn.frankerfacez.com")
                 || host.endsWith(".ggpht.com")
                 || host.endsWith(".googleusercontent.com");
     }
