@@ -47,6 +47,10 @@ public final class YouTubeProvider extends ChatProvider {
     private final String apiKey;
     private final String language;
     private final NetClient net = new NetClient();
+    private static final long BOOTSTRAP_TTL_MS = 60_000L;
+    private volatile Bootstrap cachedBootstrap;
+    private volatile String cachedBootstrapVideoId = "";
+    private volatile long cachedBootstrapAt;
     private final Set<String> seenIds = new HashSet<>();
     private final ArrayDeque<String> seenOrder = new ArrayDeque<>();
     private volatile ManagedChannel grpcChannel;
@@ -126,7 +130,7 @@ public final class YouTubeProvider extends ChatProvider {
     }
 
     private void runCompatibility(String videoId, YouTubeMode mode) throws Exception {
-        Bootstrap bootstrap = bootstrap(videoId);
+        Bootstrap bootstrap = bootstrap(videoId, false);
         String continuation = bootstrap.continuation;
         callback.onStatus("youtube", mode == YouTubeMode.COMPATIBILITY_FALLBACK
                 ? "compatibility_fallback" : "compatibility", mode);
@@ -153,7 +157,7 @@ public final class YouTubeProvider extends ChatProvider {
             if (response.code() == 429) throw new RateLimited();
             if (response.code() == 401 || response.code() == 403) {
                 if (++failures >= 3) throw new IOException("Compatibility chat rejected");
-                bootstrap = bootstrap(videoId);
+                bootstrap = bootstrap(videoId, true);
                 continuation = bootstrap.continuation;
                 continue;
             }
@@ -173,7 +177,16 @@ public final class YouTubeProvider extends ChatProvider {
         }
     }
 
-    private Bootstrap bootstrap(String videoId) throws Exception {
+    private Bootstrap bootstrap(String videoId, boolean forceRefresh) throws Exception {
+        // The watch page is 1-2 MB; re-downloading it on every reconnect (and
+        // every provider restart) is wasteful on mobile data. innertube
+        // key/client version are stable, so a short TTL cache is enough.
+        Bootstrap cached = cachedBootstrap;
+        if (!forceRefresh && cached != null
+                && videoId.equals(cachedBootstrapVideoId)
+                && android.os.SystemClock.elapsedRealtime() - cachedBootstrapAt < BOOTSTRAP_TTL_MS) {
+            return cached;
+        }
         String videoUrl = "https://www.youtube.com/watch?v=" + videoId;
         NetClient.ResponseData response = net.get(videoUrl);
         if (response.code() == 429) throw new RateLimited();
@@ -201,7 +214,11 @@ public final class YouTubeProvider extends ChatProvider {
                 .put("clientName", clientName).put("clientVersion", clientVersion);
         String visitor = JsonTools.extractConfigString(response.body(), "VISITOR_DATA");
         if (!visitor.isEmpty()) client.put("visitorData", visitor);
-        return new Bootstrap(videoUrl, continuation.token(), key, clientNumber, clientVersion, context);
+        Bootstrap built = new Bootstrap(videoUrl, continuation.token(), key, clientNumber, clientVersion, context);
+        cachedBootstrap = built;
+        cachedBootstrapVideoId = videoId;
+        cachedBootstrapAt = android.os.SystemClock.elapsedRealtime();
+        return built;
     }
 
     private void runOfficial(String videoId) throws Exception {
@@ -224,7 +241,6 @@ public final class YouTubeProvider extends ChatProvider {
         Map<String, String> parameters = new LinkedHashMap<>();
         parameters.put("part", "liveStreamingDetails");
         parameters.put("id", videoId);
-        parameters.put("key", apiKey);
         JSONObject details = apiGet("https://www.googleapis.com/youtube/v3/videos", parameters);
         JSONArray items = details.optJSONArray("items");
         if (items == null || items.length() == 0) throw new StreamOffline();
@@ -256,7 +272,13 @@ public final class YouTubeProvider extends ChatProvider {
                 headers.put(apiHeader, apiKey);
                 V3DataLiveChatMessageServiceGrpc.V3DataLiveChatMessageServiceBlockingStub stub =
                         V3DataLiveChatMessageServiceGrpc.newBlockingStub(ClientInterceptors.intercept(
-                                channel, MetadataUtils.newAttachHeadersInterceptor(headers)));
+                                channel, MetadataUtils.newAttachHeadersInterceptor(headers)))
+                                // Without a deadline hasNext()/next() can block
+                                // forever on a stalled stream that keepalive
+                                // pings fail to detect. DEADLINE_EXCEEDED is
+                                // handled by the catch below (backoff, then
+                                // fallback to polling after repeated failures).
+                                .withDeadlineAfter(120, TimeUnit.SECONDS);
                 LiveChatMessageListRequest.Builder request = LiveChatMessageListRequest.newBuilder()
                         .setLiveChatId(chatId).setHl(language).setProfileImageSize(32)
                         .addPart("snippet").addPart("authorDetails");
@@ -316,7 +338,6 @@ public final class YouTubeProvider extends ChatProvider {
             parameters.put("part", "id,snippet,authorDetails");
             parameters.put("liveChatId", chatId);
             parameters.put("maxResults", "200");
-            parameters.put("key", apiKey);
             if (!officialPageToken.isEmpty()) parameters.put("pageToken", officialPageToken);
             JSONObject body = apiGet("https://www.googleapis.com/youtube/v3/liveChat/messages", parameters);
             JSONArray items = body.optJSONArray("items");
@@ -334,7 +355,9 @@ public final class YouTubeProvider extends ChatProvider {
 
     private JSONObject apiGet(String url, Map<String, String> parameters) throws Exception {
         try {
-            return net.getJson(url, parameters);
+            // The API key travels in the X-goog-api-key header instead of the
+            // "key" query parameter so it cannot leak into proxy/CDN logs.
+            return net.getJson(url, parameters, Map.of("X-goog-api-key", apiKey));
         } catch (NetClient.HttpFailure failure) {
             String reason = apiErrorReason(failure.responseBody);
             if (failure.code == 429 || reason.contains("quota") || reason.contains("rate"))

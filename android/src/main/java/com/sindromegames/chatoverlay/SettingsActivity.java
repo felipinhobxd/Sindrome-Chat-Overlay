@@ -42,14 +42,15 @@ public final class SettingsActivity extends AppCompatActivity {
     private String originalKey;
     private KeyState keyState = KeyState.UNCHANGED;
     private final YouTubeKeyValidator validator = new YouTubeKeyValidator();
-    private final NotificationSoundPlayer soundPlayer = new NotificationSoundPlayer();
+    private final NotificationSoundPlayer soundPlayer = new NotificationSoundPlayer(this);
     private final Handler debounce = new Handler(Looper.getMainLooper());
     private Runnable pendingValidation;
 
     private Spinner language;
+    private CheckBox thirdPartyEmotes;
     private CheckBox twitchEnabled, youtubeEnabled, autoScroll, showTimestamps, showPlatform,
             hideCommands, soundEnabled;
-    private EditText twitchChannel, youtubeInput, apiKey;
+    private EditText twitchChannel, youtubeInput, apiKey, hiddenUsers, hiddenWords;
     private TextView modeTitle, modeDetail, opacityLabel, fontLabel, maximumLabel,
             volumeLabel, intervalLabel;
     private LinearLayout advanced;
@@ -156,6 +157,11 @@ public final class SettingsActivity extends AppCompatActivity {
         autoScroll = check(R.string.auto_scroll); root.addView(autoScroll);
         showTimestamps = check(R.string.show_timestamps); root.addView(showTimestamps);
         showPlatform = check(R.string.show_platform); root.addView(showPlatform);
+        thirdPartyEmotes = check(R.string.third_party_emotes); root.addView(thirdPartyEmotes);
+        root.addView(label(R.string.hidden_users_hint));
+        hiddenUsers = field(R.string.hidden_users_hint, false); root.addView(hiddenUsers);
+        root.addView(label(R.string.hidden_words_hint));
+        hiddenWords = field(R.string.hidden_words_hint, false); root.addView(hiddenWords);
         hideCommands = check(R.string.hide_commands); root.addView(hideCommands);
 
         root.addView(sectionTitle(R.string.sound));
@@ -185,6 +191,14 @@ public final class SettingsActivity extends AppCompatActivity {
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(56)); saveParams.topMargin = dp(18);
         root.addView(save, saveParams);
         setContentView(scroll);
+        // targetSdk 35 runs edge-to-edge; pad the scroll container by the
+        // system bars so content never draws under them.
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(scroll, (view, insets) -> {
+            androidx.core.graphics.Insets bars = insets.getInsets(
+                    androidx.core.view.WindowInsetsCompat.Type.systemBars());
+            view.setPadding(0, bars.top, 0, bars.bottom);
+            return androidx.core.view.WindowInsetsCompat.CONSUMED;
+        });
         attachListeners();
     }
 
@@ -198,6 +212,9 @@ public final class SettingsActivity extends AppCompatActivity {
         maximum.setProgress((settings.maxMessages - 20) / 10);
         autoScroll.setChecked(settings.autoScroll); showTimestamps.setChecked(settings.showTimestamps);
         showPlatform.setChecked(settings.showPlatform); hideCommands.setChecked(settings.hideCommands);
+        thirdPartyEmotes.setChecked(settings.thirdPartyEmotes);
+        hiddenUsers.setText(settings.hiddenUsers);
+        hiddenWords.setText(settings.hiddenWords);
         soundEnabled.setChecked(settings.soundEnabled); volume.setProgress(settings.soundVolume);
         twitchSound.setSelection(soundPosition(settings.twitchSound));
         youtubeSound.setSelection(soundPosition(settings.youtubeSound));
@@ -245,6 +262,10 @@ public final class SettingsActivity extends AppCompatActivity {
         }
         keyState = KeyState.CHECKING; renderMode();
         validator.validate(key, result -> {
+            // The validator executor can deliver after onDestroy (e.g. the
+            // activity is recreated by a rotation); touching views then would
+            // leak the destroyed instance.
+            if (isDestroyed() || isFinishing()) return;
             if (!apiKey.getText().toString().trim().equals(key)) return;
             keyState = switch (result) {
                 case VALID -> KeyState.VALID;
@@ -283,6 +304,9 @@ public final class SettingsActivity extends AppCompatActivity {
         settings.maxMessages = maximum.getProgress() * 10 + 20;
         settings.autoScroll = autoScroll.isChecked(); settings.showTimestamps = showTimestamps.isChecked();
         settings.showPlatform = showPlatform.isChecked(); settings.hideCommands = hideCommands.isChecked();
+        settings.thirdPartyEmotes = thirdPartyEmotes.isChecked();
+        settings.hiddenUsers = hiddenUsers.getText().toString().trim();
+        settings.hiddenWords = hiddenWords.getText().toString().trim();
         settings.soundEnabled = soundEnabled.isChecked(); settings.soundVolume = volume.getProgress();
         settings.twitchSound = soundId(twitchSound.getSelectedItemPosition());
         settings.youtubeSound = soundId(youtubeSound.getSelectedItemPosition());

@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import queue
 import sys
+import threading
 import time
 from collections import deque
 from pathlib import Path
@@ -37,6 +38,7 @@ from PySide6.QtWidgets import (
 
 from .. import __version__
 from ..events import ProviderEvent
+from ..filters import should_display
 from ..i18n import tr
 from ..models import ChatMessage
 from ..providers import TwitchProvider, YouTubeProvider
@@ -49,7 +51,6 @@ from ..updates import (
     UpdateDownloader,
     UpdateDownloadResult,
     UpdateInfo,
-    sha256_matches,
 )
 from ..win32 import WindowsGlobalHotkey, WindowsOverlayController, native_message_values
 from .message_card import MessageCard
@@ -351,7 +352,10 @@ class OverlayWindow(QMainWindow):
 
     def _show_install_prompt(self, result: UpdateDownloadResult) -> None:
         installer_path = result.installer_path
-        if installer_path is None or not sha256_matches(installer_path, result.sha256):
+        # The worker thread hash-verified these exact bytes right before
+        # publishing the result; re-hashing here would freeze the UI reading
+        # up to 250 MB from disk.
+        if installer_path is None or not result.verified:
             self._show_update_failure(
                 UpdateDownloadResult(
                     status="error",
@@ -372,7 +376,10 @@ class OverlayWindow(QMainWindow):
         prompt.exec()
         if prompt.clickedButton() is not install_button:
             return
-        if not sha256_matches(installer_path, result.sha256):
+        # Cheap change detection before launch: the download was
+        # hash-verified in the worker, so a size/mtime mismatch means the
+        # file was touched after the verified snapshot and must not launch.
+        if not self._installer_unchanged_since_download(installer_path, result):
             self._show_update_failure(
                 UpdateDownloadResult(
                     status="error",
@@ -396,6 +403,17 @@ class OverlayWindow(QMainWindow):
             )
             return
         QTimer.singleShot(0, self.close)
+
+    @staticmethod
+    def _installer_unchanged_since_download(installer_path, result: UpdateDownloadResult) -> bool:
+        try:
+            stat = installer_path.stat()
+        except OSError:
+            return False
+        return (
+            stat.st_size == result.file_size
+            and stat.st_mtime_ns == result.file_mtime_ns
+        )
 
     def _show_update_failure(self, result: UpdateDownloadResult) -> None:
         error_keys = {
@@ -650,6 +668,7 @@ class OverlayWindow(QMainWindow):
                 self.events,
                 self.settings.twitch_channel,
                 self.settings.language,
+                third_party_emotes=self.settings.third_party_emotes,
             )
             self.providers.append(provider)
             provider.start()
@@ -679,11 +698,26 @@ class OverlayWindow(QMainWindow):
         self.providers.clear()
         for provider in old_providers:
             provider.stop()
-        for provider in old_providers:
+        if old_providers:
+            # join() can block for seconds on a provider stuck in a network
+            # read; reap them on a daemon thread instead of freezing the UI.
+            # Old workers keep their old queue, so any late events they emit
+            # go to a queue nobody reads and cannot corrupt the new state.
+            threading.Thread(
+                target=self._reap_providers,
+                args=(old_providers,),
+                name="sindrome-provider-reaper",
+                daemon=True,
+            ).start()
+
+    @staticmethod
+    def _reap_providers(providers: list[BaseProvider]) -> None:
+        for provider in providers:
+            provider.join(timeout=5.0)
             if provider.is_alive():
-                provider.join(timeout=1.0)
-                if provider.is_alive():
-                    self.log.warning("%s provider did not stop within one second.", provider.platform)
+                logging.getLogger("sindrome_overlay.overlay").warning(
+                    "%s provider did not stop within five seconds.", provider.platform
+                )
 
     def _drain_events(self) -> None:
         for _ in range(100):
@@ -699,11 +733,13 @@ class OverlayWindow(QMainWindow):
                 self._set_status(event.platform, event.state, event.text)
             elif event.kind == "delete" and event.message_id:
                 self._remove_message_id(event.message_id)
+            elif event.kind == "delete_author" and event.author_id:
+                self._remove_author_id(event.author_id)
             elif event.kind == "clear":
                 self.clear_messages(event.platform)
 
     def add_message(self, message: ChatMessage) -> None:
-        if self.settings.hide_commands and message.text.lstrip().startswith("!"):
+        if not should_display(message, self.settings):
             return
         if message.message_id and message.message_id in self.seen_ids:
             return
@@ -716,7 +752,7 @@ class OverlayWindow(QMainWindow):
         self.messages.append(message)
         self._append_card(message)
         self._trim_messages()
-        self._play_message_sound(message.platform)
+        self._play_message_sound(message.platform, message)
 
     def _append_card(self, message: ChatMessage) -> None:
         self.empty_state.hide()
@@ -745,7 +781,32 @@ class OverlayWindow(QMainWindow):
         if self.settings.auto_scroll:
             self.scroll.verticalScrollBar().setValue(maximum)
 
-    def _play_message_sound(self, platform: str) -> None:
+    def _play_message_sound(self, platform: str, message: ChatMessage | None = None) -> None:
+        # High-value events must always be audible and get their own presets so
+        # they stand out from the regular per-platform chat sound.
+        kind = message.kind if message is not None else "message"
+        if kind in {"paid", "bits"}:
+            self.notification_sounds.play(
+                "bell",
+                enabled=self.settings.sound_enabled,
+                volume=self.settings.sound_volume,
+                twitch_sound="bell",
+                youtube_sound="bell",
+                min_interval_ms=0,
+                bypass_limit=True,
+            )
+            return
+        if kind == "membership":
+            self.notification_sounds.play(
+                "chime",
+                enabled=self.settings.sound_enabled,
+                volume=self.settings.sound_volume,
+                twitch_sound="chime",
+                youtube_sound="chime",
+                min_interval_ms=0,
+                bypass_limit=True,
+            )
+            return
         self.notification_sounds.play(
             platform,
             enabled=self.settings.sound_enabled,
@@ -776,6 +837,12 @@ class OverlayWindow(QMainWindow):
         except ValueError:
             return
         self._remove_at(index)
+
+    def _remove_author_id(self, author_id: str) -> None:
+        # Ban/timeout: remove every surviving message from that account.
+        for index in range(len(self.messages) - 1, -1, -1):
+            if self.messages[index].author_id == author_id:
+                self._remove_at(index)
 
     def _remove_at(self, index: int) -> None:
         if index < 0 or index >= len(self.cards):
@@ -832,22 +899,46 @@ class OverlayWindow(QMainWindow):
     def open_settings(self) -> None:
         if self.settings.click_through:
             self.set_click_through(False)
+        self._before_settings_dialog()
         dialog = SettingsDialog(
             self.settings,
             self,
             youtube_connection_mode=self.youtube_connection_mode,
+            **self._settings_dialog_extras(),
         )
+        self._connect_settings_dialog(dialog)
         dialog.setStyleSheet(build_stylesheet(self.settings))
         if dialog.exec() != SettingsDialog.Accepted:
             return
         self._remember_geometry()
         updated = dialog.settings()
+        self._apply_settings(updated)
+
+    # --- Settings-flow hooks (overridden by the virtualized overlay) -------
+
+    def _before_settings_dialog(self) -> None:
+        return
+
+    def _settings_dialog_extras(self) -> dict:
+        return {}
+
+    def _connect_settings_dialog(self, dialog: SettingsDialog) -> None:
+        return
+
+    def _apply_settings(self, updated: Settings) -> None:
+        """Single accepted-settings pipeline shared by both overlays."""
+        # _remember_geometry stored the current window geometry on
+        # self.settings right before this call; both overlays want the dialog
+        # result combined with that geometry.
         updated.window_x = self.settings.window_x
         updated.window_y = self.settings.window_y
         updated.window_width = self.settings.window_width
         updated.window_height = self.settings.window_height
         self.settings = updated
-        self.store.save(self.settings)
+        try:
+            self.store.save(self.settings)
+        except (OSError, ValueError) as exc:
+            self.log.warning("Unable to save settings: %s", exc)
         self.notification_sounds.reset_limit()
         if not self.settings.check_for_updates:
             self._stop_update_checker()
@@ -859,6 +950,10 @@ class OverlayWindow(QMainWindow):
         self._rebuild_cards()
         self._restart_providers()
         self.set_click_through(self.settings.click_through)
+        self._settings_applied()
+
+    def _settings_applied(self) -> None:
+        return
 
     def _settings_from_tray(self) -> None:
         if not self.isVisible():

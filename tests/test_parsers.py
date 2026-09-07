@@ -98,8 +98,15 @@ class TwitchParserTests(unittest.TestCase):
             ("clear", None),
         )
         self.assertEqual(
+            parse_twitch_line(
+                "@room-id=42;target-user-id=99 :tmi.twitch.tv CLEARCHAT #canal :usuario"
+            ),
+            ("delete_author", "99"),
+        )
+        # Missing tag falls back to the banned login from the trailing arg.
+        self.assertEqual(
             parse_twitch_line(":tmi.twitch.tv CLEARCHAT #canal :usuario"),
-            ("other", None),
+            ("delete_author", "usuario"),
         )
 
 

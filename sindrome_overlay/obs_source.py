@@ -9,6 +9,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
+import requests
+
 from .emotes import twitch_emote_url
 from .models import ChatEmote, ChatMessage
 
@@ -62,6 +64,7 @@ class ObsChatSourceServer:
         self._lock = threading.RLock()
         self._httpd: _LocalObsHTTPServer | None = None
         self._thread: threading.Thread | None = None
+        self._badge_image_urls: dict[str, str] = {}
         self._last_error = ""
 
     @property
@@ -92,6 +95,7 @@ class ObsChatSourceServer:
         if self.running:
             return True
         self.stop()
+        self._load_badge_images_async()
         try:
             server = _LocalObsHTTPServer((_HOST, self._config.port), _ObsRequestHandler)
         except OSError as exc:
@@ -112,6 +116,44 @@ class ObsChatSourceServer:
         thread.start()
         self.log.info("OBS browser source listening on %s", self.url)
         return True
+
+    def _load_badge_images_async(self) -> None:
+        """Fetches the global Twitch badge manifest once so the browser source
+        can render badge images instead of text. Failures are silent: the page
+        falls back to the text badge names it already receives."""
+        def worker() -> None:
+            try:
+                response = requests.get(
+                    "https://badges.twitch.tv/v1/badges/global/display?language=en",
+                    timeout=(3.0, 6.0),
+                )
+                payload = response.json() if response.status_code < 400 else {}
+            except (requests.RequestException, ValueError) as exc:
+                self.log.debug("Badge manifest unavailable: %s", exc)
+                return
+            mapping: dict[str, str] = {}
+            badge_sets = payload.get("badge_sets") if isinstance(payload, dict) else None
+            if isinstance(badge_sets, dict):
+                for set_id, set_payload in badge_sets.items():
+                    versions = set_payload.get("versions") if isinstance(set_payload, dict) else None
+                    if not isinstance(versions, dict):
+                        continue
+                    for version, version_payload in versions.items():
+                        if not isinstance(version_payload, dict):
+                            continue
+                        url = str(
+                            version_payload.get("image_url_2x")
+                            or version_payload.get("image_url_1x")
+                            or ""
+                        )
+                        if set_id and version and url.startswith("https://"):
+                            mapping[f"{set_id}/{version}"] = url
+            with self._lock:
+                self._badge_image_urls = mapping
+            if mapping:
+                self.log.info("OBS badge images loaded: %d", len(mapping))
+
+        threading.Thread(target=worker, name="SindromeObsBadges", daemon=True).start()
 
     def stop(self) -> None:
         server = self._httpd
@@ -139,13 +181,18 @@ class ObsChatSourceServer:
             self._revision += 1
 
     def replace_messages(self, messages: list[ChatMessage]) -> None:
-        payloads = [message_payload(message) for message in messages[-self._config.max_messages :]]
+        payloads = [
+            message_payload(message, self._badge_image_urls)
+            for message in messages[-self._config.max_messages :]
+        ]
         with self._lock:
             self._messages = deque(payloads, maxlen=self._config.max_messages)
             self._revision += 1
 
     def publish_message(self, message: ChatMessage) -> None:
-        payload = message_payload(message)
+        with self._lock:
+            badge_images = dict(self._badge_image_urls)
+        payload = message_payload(message, badge_images)
         with self._lock:
             message_id = str(payload.get("message_id") or "")
             if message_id and any(item.get("message_id") == message_id for item in self._messages):
@@ -158,6 +205,17 @@ class ObsChatSourceServer:
             return
         with self._lock:
             retained = [item for item in self._messages if item.get("message_id") != message_id]
+            if len(retained) == len(self._messages):
+                return
+            self._messages = deque(retained, maxlen=self._config.max_messages)
+            self._revision += 1
+
+    def remove_by_author(self, author_id: str) -> None:
+        """Drops the banned account's history from the browser source."""
+        if not author_id:
+            return
+        with self._lock:
+            retained = [item for item in self._messages if item.get("author_id") != author_id]
             if len(retained) == len(self._messages):
                 return
             self._messages = deque(retained, maxlen=self._config.max_messages)
@@ -191,12 +249,21 @@ class ObsChatSourceServer:
             }
 
 
-def message_payload(message: ChatMessage) -> dict[str, Any]:
+def message_payload(
+    message: ChatMessage,
+    badge_images: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    resolved_badge_images = badge_images or {}
     return {
         "platform": message.platform,
         "author": message.author,
+        "author_id": message.author_id,
         "author_colour": message.safe_author_colour,
         "badges": list(message.badges[:3]),
+        "badge_images": [
+            resolved_badge_images.get(f"{badge.set_id}/{badge.version}", "")
+            for badge in message.badge_refs[:3]
+        ],
         "amount": message.amount,
         "message_id": message.message_id,
         "kind": message.kind,
@@ -256,6 +323,14 @@ class _ObsRequestHandler(BaseHTTPRequestHandler):
     server_version = "SindromeOBS/1"
 
     def do_GET(self) -> None:  # noqa: N802 - stdlib HTTP API
+        # DNS-rebinding defence: a hostile web page can resolve a domain it
+        # owns to 127.0.0.1 and then read same-origin responses from this
+        # server (the chat payload). Browsers always send an explicit Host
+        # header, so only the exact loopback host:port this server advertises
+        # is accepted.
+        if not self._host_allowed():
+            self.send_error(403)
+            return
         source: ObsChatSourceServer = self.server.obs_source  # type: ignore[attr-defined]
         parsed = urlsplit(self.path)
         if parsed.path in {"/", "/obs-chat"}:
@@ -279,6 +354,16 @@ class _ObsRequestHandler(BaseHTTPRequestHandler):
             self._send_json({"ok": True, "revision": source.snapshot()["revision"]})
             return
         self.send_error(404)
+
+    def _host_allowed(self) -> bool:
+        host = (self.headers.get("Host") or "").strip().lower()
+        if not host:
+            return False
+        port = self.server.server_address[1]  # type: ignore[attr-defined]
+        allowed = {f"127.0.0.1:{port}", f"localhost:{port}"}
+        if port == 80:
+            allowed.update({"127.0.0.1", "localhost"})
+        return host in allowed
 
     def log_message(self, _format: str, *_args: object) -> None:
         return
@@ -382,6 +467,12 @@ body {
   background: rgba(255,255,255,.15);
   color: #e5eaf5;
 }
+.badge-img {
+  height: 1.05em;
+  width: auto;
+  margin-right: 4px;
+  vertical-align: -.12em;
+}
 .author { font-weight: 800; }
 .amount {
   display: inline-block;
@@ -393,6 +484,15 @@ body {
   font-weight: 800;
   font-size: .8em;
   text-shadow: none;
+}
+/* High-value event highlights */
+.chat-message.paid, .chat-message.bits {
+  border-left: 3px solid #f6b73c;
+  padding-left: 5px;
+}
+.chat-message.membership {
+  border-left: 3px solid #c9a7ff;
+  padding-left: 5px;
 }
 .message-text { white-space: pre-wrap; }
 .emote {
@@ -452,11 +552,23 @@ body {
       row.appendChild(platform);
     }
     if (config.show_badges) {
-      for (const badge of (message.badges || []).slice(0, 3)) {
-        const node = document.createElement('span');
-        node.className = 'badge';
-        node.textContent = badgeName(badge);
-        row.appendChild(node);
+      const names = (message.badges || []).slice(0, 3);
+      const images = message.badge_images || [];
+      for (let index = 0; index < names.length; index++) {
+        const url = String(images[index] || '');
+        if (url.startsWith('https://')) {
+          const image = document.createElement('img');
+          image.className = 'badge-img';
+          image.src = url;
+          image.alt = badgeName(names[index]);
+          image.title = badgeName(names[index]);
+          row.appendChild(image);
+        } else {
+          const node = document.createElement('span');
+          node.className = 'badge';
+          node.textContent = badgeName(names[index]);
+          row.appendChild(node);
+        }
       }
     }
 
@@ -481,19 +593,78 @@ body {
     return row;
   }
 
+  let nodes = new Map();
+  let renderedConfigKey = '';
+
+  function configKey(config) {
+    return [
+      config.font_size, config.message_background_opacity,
+      config.show_timestamps, config.show_platform_labels, config.show_badges,
+    ].join('|');
+  }
+
   function render(state) {
     const config = state.config || {};
+    const messages = state.messages || [];
     const fontSize = Math.max(11, Math.min(40, Number(config.font_size) || 20));
     const opacity = Math.max(0, Math.min(100, Number(config.message_background_opacity) || 0)) / 100;
     document.documentElement.style.setProperty('--font-size', `${fontSize}px`);
     document.documentElement.style.setProperty('--emote-size', `${Math.round(fontSize * 1.5)}px`);
     document.documentElement.style.setProperty('--bubble-alpha', String(opacity));
 
-    const fragment = document.createDocumentFragment();
-    for (const message of (state.messages || [])) {
-      fragment.appendChild(messageNode(message, config));
+    const key = configKey(config);
+    if (key !== renderedConfigKey) {
+      // Appearance flags changed: every row depends on them, so rebuild once.
+      nodes.clear();
+      chat.replaceChildren();
+      renderedConfigKey = key;
     }
-    chat.replaceChildren(fragment);
+
+    const ids = [];
+    let idsUsable = true;
+    for (const message of messages) {
+      const id = String(message.message_id || '');
+      if (!id || ids.includes(id)) { idsUsable = false; break; }
+      ids.push(id);
+    }
+    if (!idsUsable) {
+      // Rare fallback (missing/duplicate ids): rebuild synchronously.
+      nodes.clear();
+      const fragment = document.createDocumentFragment();
+      for (const message of messages) fragment.appendChild(messageNode(message, config));
+      chat.replaceChildren(fragment);
+      chat.scrollTop = chat.scrollHeight;
+      return;
+    }
+
+    // Fast path: DOM already matches the snapshot exactly (revision-only or
+    // unchanged content) — skip all DOM work.
+    const children = chat.children;
+    if (children.length === messages.length) {
+      let same = true;
+      for (let index = 0; index < messages.length; index++) {
+        if (children[index] !== nodes.get(ids[index])) { same = false; break; }
+      }
+      if (same) { chat.scrollTop = chat.scrollHeight; return; }
+    }
+
+    // Incremental path: create only new rows, re-append existing ones in
+    // snapshot order (appendChild moves existing nodes), drop removed rows.
+    for (let index = 0; index < messages.length; index++) {
+      const id = ids[index];
+      let node = nodes.get(id);
+      if (!node) {
+        node = messageNode(messages[index], config);
+        nodes.set(id, node);
+      }
+      if (chat.lastElementChild !== node) chat.appendChild(node);
+    }
+    for (const [id, node] of nodes) {
+      if (!ids.includes(id)) {
+        node.remove();
+        nodes.delete(id);
+      }
+    }
     chat.scrollTop = chat.scrollHeight;
   }
 

@@ -4,7 +4,8 @@ import json
 import logging
 import unittest
 from datetime import UTC, datetime
-from urllib.request import urlopen
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
 from sindrome_overlay.models import ChatEmote, ChatMessage
 from sindrome_overlay.obs_source import ObsChatSourceServer, ObsSourceConfig, message_payload
@@ -139,6 +140,28 @@ class ObsSourceServerTests(unittest.TestCase):
         self.assertEqual(before, after)
         self.assertEqual(after[0]["message_id"], "persistent")
         self.assertEqual(self.server.snapshot()["config"]["message_background_opacity"], 0)
+
+    def test_requests_with_a_foreign_host_header_are_rejected(self) -> None:
+        # DNS rebinding: an attacker page resolving its own domain to
+        # 127.0.0.1 arrives with a non-loopback Host header and must not be
+        # able to read the chat payload.
+        bound_port = self.server.bound_port
+        request = Request(
+            f"http://127.0.0.1:{bound_port}/api/state?revision=-1",
+            headers={"Host": "attacker.example:8080"},
+        )
+        try:
+            with urlopen(request, timeout=3) as response:  # noqa: S310 - localhost test
+                self.fail(f"expected rejection, got HTTP {response.status}")
+        except HTTPError as error:
+            self.assertEqual(error.code, 403)
+
+        allowed = Request(
+            f"http://127.0.0.1:{bound_port}/api/state?revision=-1",
+            headers={"Host": f"127.0.0.1:{bound_port}"},
+        )
+        with urlopen(allowed, timeout=3) as response:  # noqa: S310 - localhost test
+            self.assertEqual(response.status, 200)
 
 
 if __name__ == "__main__":

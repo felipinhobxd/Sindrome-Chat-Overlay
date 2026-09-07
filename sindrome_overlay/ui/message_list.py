@@ -128,6 +128,11 @@ class MessageListModel(QAbstractListModel):
 class MessageCardDelegate(QStyledItemDelegate):
     """Creates real MessageCard widgets only for rows near the viewport."""
 
+    # Height entries are keyed by (message_id, width, settings) and survive
+    # row removals because a message's height does not depend on its position.
+    # The cap bounds memory when long sessions churn through millions of ids.
+    _MAX_HEIGHT_CACHE_ENTRIES = 4096
+
     def __init__(
         self,
         settings: Settings,
@@ -137,14 +142,17 @@ class MessageCardDelegate(QStyledItemDelegate):
         super().__init__(parent)
         self.settings = settings
         self.asset_cache = asset_cache
-        self._height_cache: dict[tuple[int, int, tuple[object, ...]], int] = {}
+        self._height_cache: dict[tuple[str, int, tuple[object, ...]], int] = {}
         self._cached_widths: list[int] = []
+        self._asset_refresh_pending = False
+        self._font_cache: tuple[int, tuple[QFont, QFont, QFontMetrics, QFontMetrics]] | None = None
         if asset_cache is not None:
             asset_cache.emote_ready.connect(self._asset_layout_changed)
             asset_cache.badge_ready.connect(self._asset_layout_changed)
 
     def set_settings(self, settings: Settings) -> None:
         self.settings = settings
+        self._font_cache = None
         self.invalidate_height_cache()
 
     def invalidate_height_cache(self) -> None:
@@ -188,8 +196,7 @@ class MessageCardDelegate(QStyledItemDelegate):
         actual_height = editor.required_height_for_width(width)
         editor.setGeometry(option.rect)
         key = self._cache_key(index, width)
-        previous = self._height_cache.get(key)
-        if previous != actual_height:
+        if key is not None and self._height_cache.get(key) != actual_height:
             self._height_cache[key] = actual_height
             persistent = QPersistentModelIndex(index)
             QTimer.singleShot(0, lambda: self._emit_size_hint_changed(persistent))
@@ -203,7 +210,7 @@ class MessageCardDelegate(QStyledItemDelegate):
             width = view.viewport().width() - 2 * view.spacing()
         width = max(1, width)
         key = self._cache_key(index, width)
-        cached = self._height_cache.get(key)
+        cached = self._height_cache.get(key) if key is not None else None
         if cached is not None:
             return QSize(width, cached)
         message = index.data(MessageListModel.MessageRole)
@@ -234,13 +241,10 @@ class MessageCardDelegate(QStyledItemDelegate):
         painter.save()
         painter.setClipRect(option.rect, Qt.ClipOperation.IntersectClip)
         rect = option.rect.adjusted(7, 4, -7, -4)
-        base_font = QFont("Segoe UI")
-        base_font.setPixelSize(self.settings.font_size)
-        author_font = QFont(base_font)
-        author_font.setBold(True)
+        _base_font, author_font, _base_metrics, author_metrics = self._fonts()
         painter.setFont(author_font)
         painter.setPen(QColor(message.safe_author_colour))
-        metrics = QFontMetrics(author_font)
+        metrics = author_metrics
         author_height = metrics.lineSpacing()
         painter.drawText(
             QRect(rect.left(), rect.top(), rect.width(), author_height),
@@ -264,9 +268,7 @@ class MessageCardDelegate(QStyledItemDelegate):
         painter.restore()
 
     def _estimate_height(self, message: ChatMessage, width: int) -> int:
-        base_font = QFont("Segoe UI")
-        base_font.setPixelSize(self.settings.font_size)
-        metrics = QFontMetrics(base_font)
+        _base_font, _author_font, metrics, _author_metrics = self._fonts()
         meta_height = metrics.lineSpacing()
         if message.badge_refs:
             meta_height = max(
@@ -289,7 +291,7 @@ class MessageCardDelegate(QStyledItemDelegate):
         # visible, updateEditorGeometry records the exact widget size for that width.
         return max(42, 2 + meta_height + 2 + 3 + body_height + 4 + 3 + 4)
 
-    def _cache_key(self, index: QModelIndex, width: int) -> tuple[int, int, tuple[object, ...]]:
+    def _cache_key(self, index: QModelIndex, width: int) -> tuple[str, int, tuple[object, ...]] | None:
         # Keep the two recent widths so showing/hiding the scrollbar cannot erase
         # exact heights and oscillate forever between short estimates and tall rows.
         # Bounding this also avoids retaining an entry for every pixel of a resize.
@@ -301,7 +303,32 @@ class MessageCardDelegate(QStyledItemDelegate):
                     key: value for key, value in self._height_cache.items() if key[1] != oldest
                 }
         message = index.data(MessageListModel.MessageRole)
-        return (id(message), width, self._settings_signature())
+        message_id = message.message_id if isinstance(message, ChatMessage) else ""
+        # Cache by the stable platform message id. Keying by id(message) was a
+        # correctness bug: CPython may hand a collected object's id() to a
+        # different message, which served a wrong cached height. Messages
+        # without an id simply bypass the cache.
+        if not message_id:
+            return None
+        if len(self._height_cache) > self._MAX_HEIGHT_CACHE_ENTRIES:
+            for stale in list(self._height_cache)[: len(self._height_cache) // 4]:
+                del self._height_cache[stale]
+        return (message_id, width, self._settings_signature())
+
+    def _fonts(self) -> tuple[QFont, QFont, QFontMetrics, QFontMetrics]:
+        """Reusable fonts/metrics: _estimate_height and paint run per visible
+        row, and rebuilding QFont objects for every call wastes allocations
+        during fast scrolling."""
+        cached = self._font_cache
+        if cached is not None and cached[0] == self.settings.font_size:
+            return cached[1]
+        base_font = QFont("Segoe UI")
+        base_font.setPixelSize(self.settings.font_size)
+        author_font = QFont(base_font)
+        author_font.setBold(True)
+        value = (base_font, author_font, QFontMetrics(base_font), QFontMetrics(author_font))
+        self._font_cache = (self.settings.font_size, value)
+        return value
 
     def _settings_signature(self) -> tuple[object, ...]:
         return (
@@ -321,6 +348,15 @@ class MessageCardDelegate(QStyledItemDelegate):
         self.sizeHintChanged.emit(model.index(persistent.row(), persistent.column()))
 
     def _asset_layout_changed(self, *_args) -> None:
+        # A burst of asset downloads must clear the height cache and relayout
+        # once per event-loop iteration, not once per image.
+        if self._asset_refresh_pending:
+            return
+        self._asset_refresh_pending = True
+        QTimer.singleShot(0, self._flush_asset_refresh)
+
+    def _flush_asset_refresh(self) -> None:
+        self._asset_refresh_pending = False
         self.invalidate_height_cache()
         view = self.parent()
         if isinstance(view, VirtualMessageListView):
@@ -349,7 +385,9 @@ class VirtualMessageListView(QListView):
         self.verticalScrollBar().rangeChanged.connect(self.schedule_editor_refresh)
         model.rowsInserted.connect(self.schedule_editor_refresh)
         model.rowsRemoved.connect(self.schedule_editor_refresh)
-        model.rowsRemoved.connect(self._invalidate_heights)
+        # NOTE: heights are keyed by stable message id, so row removals (the
+        # per-message trim after max_messages) do NOT need to clear the cache;
+        # a surviving message's height never depends on its position.
         model.modelReset.connect(self._model_reset)
         QTimer.singleShot(0, self.schedule_editor_refresh)
 

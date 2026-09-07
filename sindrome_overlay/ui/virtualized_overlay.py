@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QFileDialog, QLabel, QMessageBox, QStackedWidget
 from .. import __version__
 from ..diagnostics import export_diagnostics
 from ..feature_i18n import feature_tr
+from ..filters import should_display
 from ..obs_source import ObsChatSourceServer, ObsSourceConfig
 from ..profiles import (
     apply_overlay_profile,
@@ -193,38 +194,22 @@ class OverlayWindow(_LegacyOverlayWindow):
         self._rebuild_cards()
         self._refresh_profile_menu()
 
-    def open_settings(self) -> None:
-        if self.settings.click_through:
-            self.set_click_through(False)
+    def _before_settings_dialog(self) -> None:
         # Capture the actual current window geometry before a custom profile can be saved.
         self._remember_geometry()
-        dialog = SettingsDialog(
-            self.settings,
-            self,
-            youtube_connection_mode=self.youtube_connection_mode,
-            obs_source_url=self.obs_source.url if self.obs_source.running else "",
-        )
-        dialog.diagnostics_requested.connect(lambda: self._export_diagnostics(dialog))
-        dialog.setStyleSheet(build_stylesheet(self.settings))
-        if dialog.exec() != SettingsDialog.Accepted:
-            return
 
-        updated = dialog.settings()
-        self.settings = updated
-        self.store.save(self.settings)
+    def _settings_dialog_extras(self) -> dict:
+        return {"obs_source_url": self.obs_source.url if self.obs_source.running else ""}
+
+    def _connect_settings_dialog(self, dialog: SettingsDialog) -> None:
+        dialog.diagnostics_requested.connect(lambda: self._export_diagnostics(dialog))
+
+    def _settings_applied(self) -> None:
+        # Runs after _rebuild_cards, so the OBS history is seeded from the
+        # already-filtered message list instead of publishing rows the desktop
+        # filtered away.
         self._sync_obs_source(seed_history=True)
-        self.notification_sounds.reset_limit()
-        if not self.settings.check_for_updates:
-            self._stop_update_checker()
-        else:
-            self._start_update_check()
         self._restore_geometry()
-        self._apply_window_flags()
-        self._apply_visual_settings()
-        self._retranslate_ui(reset_statuses=True)
-        self._rebuild_cards()
-        self._restart_providers()
-        self.set_click_through(self.settings.click_through)
         self._refresh_profile_menu()
 
     def _export_diagnostics(self, parent=None) -> None:
@@ -341,6 +326,14 @@ class OverlayWindow(_LegacyOverlayWindow):
         if index >= 0:
             self._remove_at(index)
 
+    def _remove_author_id(self, author_id: str) -> None:
+        # Ban/timeout: drop the banned account's history here and in the OBS
+        # browser source.
+        self.obs_source.remove_by_author(author_id)
+        for index in range(len(self.messages) - 1, -1, -1):
+            if self.messages[index].author_id == author_id:
+                self._remove_at(index)
+
     def _remove_at(self, index: int) -> None:
         if index < 0 or index >= len(self.messages):
             return
@@ -362,11 +355,11 @@ class OverlayWindow(_LegacyOverlayWindow):
 
     def _rebuild_cards(self) -> None:
         history = list(self.messages)
-        filtered = []
-        for message in history[-self.settings.max_messages :]:
-            if self.settings.hide_commands and message.text.lstrip().startswith("!"):
-                continue
-            filtered.append(message)
+        filtered = [
+            message
+            for message in history[-self.settings.max_messages :]
+            if should_display(message, self.settings)
+        ]
 
         self.messages[:] = filtered
         self.cards.clear()

@@ -44,13 +44,15 @@ public final class OverlayWindow {
     public boolean isVisible() { return root != null; }
 
     public void show() {
-        if (isVisible() || windowManager == null || !Settings.canDrawOverlays(context)) return;
+        if (windowManager == null || !Settings.canDrawOverlays(context)) return;
+        // Retry a detach that previously failed with an unknown error, so a
+        // leftover system window can never block rebuilding the overlay.
+        detach();
+        if (root != null) return;
         settings = AppSettings.load(context);
         root = buildView();
         parameters = new WindowManager.LayoutParams(settings.overlayWidth, settings.overlayHeight,
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
-                        ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                        : WindowManager.LayoutParams.TYPE_PHONE,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                 baseFlags(), PixelFormat.TRANSLUCENT);
         parameters.gravity = Gravity.TOP | Gravity.START;
         parameters.x = settings.overlayX;
@@ -68,6 +70,7 @@ public final class OverlayWindow {
             root = null;
             parameters = null;
             chat = null;
+            headerTitle = null;
             ChatBus.updateOverlay(false, false);
         }
     }
@@ -75,17 +78,35 @@ public final class OverlayWindow {
     public void hide() {
         if (root == null) return;
         saveGeometry();
+        detach();
+        ChatBus.updateOverlay(false, false);
+        stateChanged.run();
+    }
+
+    /**
+     * Removes the root view from the WindowManager. If the removal fails with
+     * an unknown error (IPC failure, bad token), the references are kept so a
+     * later hide()/show() can retry; nulling them would orphan a live system
+     * window that no code path could remove any more. A view reported as not
+     * attached is already gone at the system level and is cleaned up.
+     */
+    private void detach() {
+        View current = root;
+        if (current == null) return;
+        boolean removed = true;
         try {
-            if (windowManager != null) windowManager.removeView(root);
+            if (windowManager != null) windowManager.removeView(current);
+        } catch (IllegalArgumentException alreadyDetached) {
+            Log.i(TAG, "Floating overlay was already detached");
         } catch (RuntimeException failure) {
-            Log.w(TAG, "Unable to detach floating overlay cleanly", failure);
+            Log.w(TAG, "Unable to detach floating overlay cleanly; will retry", failure);
+            removed = false;
         }
+        if (!removed) return;
         root = null;
         parameters = null;
         chat = null;
         headerTitle = null;
-        ChatBus.updateOverlay(false, false);
-        stateChanged.run();
     }
 
     public void refreshSettings() {
@@ -261,11 +282,12 @@ public final class OverlayWindow {
             if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
                 parameters.x = startX + Math.round(event.getRawX() - startRawX);
                 parameters.y = startY + Math.round(event.getRawY() - startRawY);
-                updateLayout();
+                scheduleLayoutUpdate(view);
                 return true;
             }
             if (event.getActionMasked() == MotionEvent.ACTION_UP
                     || event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
+                updateLayout();
                 saveGeometry();
                 return true;
             }
@@ -288,16 +310,34 @@ public final class OverlayWindow {
             if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
                 parameters.width = startWidth + Math.round(event.getRawX() - startRawX);
                 parameters.height = startHeight + Math.round(event.getRawY() - startRawY);
-                updateLayout();
+                scheduleLayoutUpdate(view);
                 return true;
             }
             if (event.getActionMasked() == MotionEvent.ACTION_UP
                     || event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
+                updateLayout();
                 saveGeometry();
                 return true;
             }
             return false;
         }
+    }
+
+    /**
+     * Coalesces WindowManager IPC to at most one updateViewLayout per
+     * animation frame while dragging or resizing: ACTION_MOVE can fire far
+     * faster than the display refresh rate and each synchronous IPC costs a
+     * binder transaction, which janks the overlay on slower devices.
+     */
+    private boolean layoutUpdatePending;
+
+    private void scheduleLayoutUpdate(View view) {
+        if (layoutUpdatePending) return;
+        layoutUpdatePending = true;
+        view.postOnAnimation(() -> {
+            layoutUpdatePending = false;
+            updateLayout();
+        });
     }
 
     private int dp(int value) {

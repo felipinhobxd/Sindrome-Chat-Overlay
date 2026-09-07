@@ -296,11 +296,14 @@ class TwitchAssetCache(QObject):
         parsed = QUrl(url)
         host = parsed.host().lower()
         return parsed.scheme().lower() == "https" and (
-            host == "static-cdn.jtvnw.net"
-            or host == "badges.twitch.tv"
-            or host.endswith(".twitch.tv")
-            or host.endswith(".ggpht.com")
-            or host.endswith(".googleusercontent.com")
+            host in {
+                "static-cdn.jtvnw.net",
+                "badges.twitch.tv",
+                "cdn.betterttv.net",
+                "cdn.7tv.app",
+                "cdn.frankerfacez.com",
+            }
+            or host.endswith((".twitch.tv", ".ggpht.com", ".googleusercontent.com"))
         )
 
     def _cached_source(self, asset_key: str, path: Path) -> str:
