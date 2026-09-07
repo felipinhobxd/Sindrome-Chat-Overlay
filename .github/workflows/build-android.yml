@@ -192,6 +192,7 @@ jobs:
       needs.build-android.result == 'success' &&
       needs.build-android.outputs.publish == 'true' &&
       needs.build-android.outputs.signing_configured == 'true'
+    runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
