@@ -124,7 +124,11 @@ def colour_contrast_ratio(foreground: str, background: str = _OVERLAY_BACKGROUND
 
 
 def _hex_to_rgb(colour: str) -> tuple[float, float, float]:
-    return tuple(int(colour[index : index + 2], 16) / 255 for index in (1, 3, 5))
+    return (
+        int(colour[1:3], 16) / 255,
+        int(colour[3:5], 16) / 255,
+        int(colour[5:7], 16) / 255,
+    )
 
 
 def _rgb_to_hex(red: float, green: float, blue: float) -> str:

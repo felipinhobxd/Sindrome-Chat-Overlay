@@ -677,7 +677,7 @@ class OverlayShell(QMainWindow):
         self.events = queue.Queue()
 
         if self.settings.twitch_enabled:
-            provider = TwitchProvider(
+            provider: TwitchProvider | YouTubeProvider = TwitchProvider(
                 self.events,
                 self.settings.twitch_channel,
                 self.settings.language,
@@ -885,7 +885,8 @@ class OverlayShell(QMainWindow):
         if self.settings.click_through:
             self.set_click_through(False)
         self._before_settings_dialog()
-        dialog = SettingsDialog(
+        dialog_cls = self._settings_dialog_class()
+        dialog = dialog_cls(
             self.settings,
             self,
             youtube_connection_mode=self.youtube_connection_mode,
@@ -900,6 +901,10 @@ class OverlayShell(QMainWindow):
         self._apply_settings(updated)
 
     # --- Settings-flow hooks (overridden by the concrete overlay) ----------
+
+    def _settings_dialog_class(self) -> type[SettingsDialog]:
+        """Dialog class instantiated by open_settings; subclasses may swap it."""
+        return SettingsDialog
 
     def _before_settings_dialog(self) -> None:
         return

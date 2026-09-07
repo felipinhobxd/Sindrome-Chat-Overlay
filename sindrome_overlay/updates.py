@@ -82,7 +82,8 @@ def version_tuple(value: str) -> tuple[int, int, int] | None:
     match = _VERSION_RE.fullmatch(value.strip())
     if not match:
         return None
-    return tuple(int(part) for part in match.groups())
+    major, minor, patch = (int(part) for part in match.groups())
+    return (major, minor, patch)
 
 
 def update_from_release(payload: Any, current_version: str) -> UpdateInfo | None:

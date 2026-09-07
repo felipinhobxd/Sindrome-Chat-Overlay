@@ -39,6 +39,31 @@ jobs:
       - name: Audit build lock
         run: python -m pip_audit --strict -r requirements-build.lock.txt
 
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.lock.txt
+
+      - name: Install runtime deps (mypy needs real PySide6/requests stubs)
+        run: python -m pip install --disable-pip-version-check -r requirements.lock.txt
+
+      - name: Install mypy
+        run: python -m pip install --disable-pip-version-check mypy==2.3.1 types-requests
+
+      - name: Run mypy (config in pyproject.toml)
+        run: python -m mypy
+
   android-osv-audit:
     runs-on: ubuntu-latest
     steps:

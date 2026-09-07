@@ -187,7 +187,7 @@ class TwitchAssetCache(QObject):
             self._mark_failed(asset_key, reply.errorString())
             return
 
-        data = bytes(reply.readAll())
+        data = bytes(reply.readAll().data())
         if len(data) > 2_000_000:
             self._mark_failed(asset_key, "image exceeds the 2 MB limit")
             return
@@ -230,7 +230,7 @@ class TwitchAssetCache(QObject):
             )
             return
 
-        data = bytes(reply.readAll())
+        data = bytes(reply.readAll().data())
         if len(data) > 5_000_000:
             self._manifest_retry_after[scope] = time.monotonic() + 300
             return
@@ -328,7 +328,7 @@ class TwitchAssetCache(QObject):
 
     def _remember_retry(self, asset_key: str, delay_seconds: float) -> None:
         if len(self._retry_after) >= _MAX_RETRY_ENTRIES and asset_key not in self._retry_after:
-            oldest_key = min(self._retry_after, key=self._retry_after.get)
+            oldest_key = min(self._retry_after, key=lambda key: self._retry_after[key])
             self._retry_after.pop(oldest_key, None)
         self._retry_after[asset_key] = time.monotonic() + delay_seconds
 

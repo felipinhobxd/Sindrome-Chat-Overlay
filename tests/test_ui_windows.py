@@ -241,8 +241,8 @@ class WindowsUiSmokeTests(unittest.TestCase):
             self.assertEqual(window.messages[-1].message_id, "mixed-39")
             self.assertEqual({message.platform for message in window.messages}, {"twitch", "youtube"})
             self.assertEqual(
-                window.scroll.verticalScrollBar().value(),
-                window.scroll.verticalScrollBar().maximum(),
+                window.message_view.verticalScrollBar().value(),
+                window.message_view.verticalScrollBar().maximum(),
             )
 
             for opacity in (100, 50, 0):

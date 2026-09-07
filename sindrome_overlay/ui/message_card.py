@@ -4,7 +4,7 @@ import base64
 import math
 import time
 
-from PySide6.QtCore import QEvent, QRect, QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QEvent, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QPixmap, QResizeEvent, QTextOption
 from PySide6.QtWidgets import QFrame, QLabel, QSizePolicy, QTextEdit, QWidget
 
@@ -247,14 +247,14 @@ class MessageCard(QFrame):
                 self._meta_labels.append(badge)
         else:
             for badge_text in message.badges[:3]:
-                badge = _ElidedLabel(_short_badge(badge_text, settings.language), self)
-                badge.setObjectName("MetaText")
-                badge.setStyleSheet(
+                badge_label = _ElidedLabel(_short_badge(badge_text, settings.language), self)
+                badge_label.setObjectName("MetaText")
+                badge_label.setStyleSheet(
                     "background: rgba(255,255,255,26); border-radius: 4px; "
                     "padding: 1px 4px; font-weight: 700;"
                 )
-                badge.setToolTip(badge_text)
-                self._meta_labels.append(badge)
+                badge_label.setToolTip(badge_text)
+                self._meta_labels.append(badge_label)
 
         self.author_label = _ElidedLabel(message.author, self)
         self.author_label.setObjectName("AuthorName")

@@ -27,3 +27,47 @@ include = ["sindrome_overlay*"]
 line-length = 100
 target-version = "py311"
 extend-exclude = ["sindrome_overlay/youtube_grpc/stream_list_pb2*.py"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["sindrome_overlay", "main.py"]
+# Progressive baseline: the codebase is fully annotated, so these only
+# formalise what already exists. Tighten gradually (disallow_untyped_defs,
+# warn_return_any) in future passes.
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = [
+    "google.*",
+    "grpc",
+    "grpc.*",
+    "requests.packages.*",
+]
+ignore_missing_imports = true
+
+# The bundled PySide6 stubs do not describe scoped enums accessed through the
+# class (Qt.WindowStaysOnTopHint, QMessageBox.Information, ...) which the
+# runtime resolves fine through shiboken. Silence attr-defined for the UI
+# modules that lean on them; everything else keeps full checking.
+[[tool.mypy.overrides]]
+module = "sindrome_overlay.ui.*"
+disable_error_code = ["attr-defined"]
+
+# Generated protobuf stubs register message classes dynamically; the standard
+# library stubs omit Windows-only ctypes symbols that settings.py guards with
+# sys.platform checks at runtime.
+[[tool.mypy.overrides]]
+module = [
+    "sindrome_overlay.youtube_grpc.*",
+    "sindrome_overlay.settings",
+]
+disable_error_code = ["attr-defined"]
+
+# createEditor() legitimately returns None (Qt C++ returns nullptr; the PySide6
+# stubs are stricter than the C++ API here).
+[[tool.mypy.overrides]]
+module = "sindrome_overlay.ui.message_list"
+disable_error_code = ["attr-defined", "override"]

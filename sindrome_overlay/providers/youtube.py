@@ -8,7 +8,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from queue import Queue
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlparse
 
 import requests
@@ -18,6 +18,9 @@ from ..i18n import normalize_language, tr
 from ..models import ChatEmote, ChatMessage, clean_text, parse_timestamp_usec
 from ..url_utils import normalize_youtube_input, youtube_video_id
 from .base import BaseProvider
+
+if TYPE_CHECKING:
+    import grpc
 
 
 class _LazyModule:

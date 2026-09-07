@@ -3,7 +3,7 @@ from __future__ import annotations
 import queue
 from dataclasses import replace
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -33,6 +33,11 @@ from ..youtube_key import YouTubeKeyValidationResult, YouTubeKeyValidator
 
 
 class SettingsDialog(QDialog):
+    # Declared on the base so both the stock dialog and the feature dialog
+    # (which extends this class) expose the same hook surface; the stock dialog
+    # simply never emits it.
+    diagnostics_requested = Signal()
+
     def __init__(
         self,
         current: Settings,
