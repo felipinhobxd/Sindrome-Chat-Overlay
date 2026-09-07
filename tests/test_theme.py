@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 
+from sindrome_overlay.card_themes import card_theme
 from sindrome_overlay.settings import Settings
 from sindrome_overlay.ui.theme import build_stylesheet
 
@@ -39,7 +40,8 @@ class OverlayOpacityTests(unittest.TestCase):
         style = build_stylesheet(Settings(background_opacity=0, card_opacity=80))
         self.assertIn("QFrame#ChatCard", style)
         self.assertIn("background: transparent;", style)
-        self.assertIn("background-color: rgba(3, 5, 9, 204);", style)
+        bubble_rgb = card_theme(Settings(background_opacity=0, card_opacity=80)).bubble_rgb_css
+        self.assertIn(f"background-color: rgba({bubble_rgb}, 204);", style)
         self.assertIn("QLabel#DragHandle", style)
         self.assertIn("background: rgba(3, 6, 11, 185);", style)
         self.assertNotIn("window-opacity", style.casefold())
@@ -53,7 +55,8 @@ class OverlayOpacityTests(unittest.TestCase):
                 card_rule = style.split("QFrame#ChatCard", 1)[1].split("}", 1)[0]
                 self.assertIn("background: transparent;", card_rule)
                 self.assertIn("border: none;", card_rule)
-                self.assertIn("background-color: rgba(3, 5, 9, 199);", style)
+                bubble_rgb = card_theme(Settings()).bubble_rgb_css
+                self.assertIn(f"background-color: rgba({bubble_rgb}, 199);", style)
 
 
 if __name__ == "__main__":

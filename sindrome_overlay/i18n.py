@@ -16,6 +16,11 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "language_hint": "The interface language changes after you save.",
         "channels": "Channels",
         "appearance": "Appearance",
+        "card_theme": "Card theme",
+        "card_theme_dark": "Dark (default)",
+        "card_theme_amoled": "AMOLED black",
+        "card_theme_ocean": "Deep ocean blue",
+        "card_theme_light": "Light",
         "sound": "Sound",
         "global_shortcut_hint": (
             "Global shortcut: Ctrl + Shift + O locks or unlocks mouse clicks on the overlay."
@@ -219,6 +224,11 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "language_hint": "O idioma da interface muda depois que você salvar.",
         "channels": "Canais",
         "appearance": "Aparência",
+        "card_theme": "Tema do cartão",
+        "card_theme_dark": "Escuro (padrão)",
+        "card_theme_amoled": "Preto AMOLED",
+        "card_theme_ocean": "Azul oceano profundo",
+        "card_theme_light": "Claro",
         "sound": "Som",
         "global_shortcut_hint": (
             "Atalho global: Ctrl + Shift + O bloqueia ou desbloqueia os cliques no overlay."

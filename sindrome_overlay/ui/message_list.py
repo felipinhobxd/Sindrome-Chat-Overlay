@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..card_themes import card_theme
 from ..models import ChatMessage
 from ..settings import Settings
 from .message_card import MessageCard
@@ -254,11 +255,12 @@ class MessageCardDelegate(QStyledItemDelegate):
         body_top = rect.top() + author_height + 3
         body_rect = QRect(rect.left(), body_top, rect.width(), max(1, rect.bottom() - body_top + 1))
         alpha = round(max(0, min(100, self.settings.card_opacity)) * 2.55)
-        painter.setBrush(QColor(3, 5, 9, alpha))
+        theme = card_theme(self.settings)
+        painter.setBrush(QColor(*theme.bubble_rgb, alpha))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.drawRoundedRect(body_rect, 6, 6)
         painter.setFont(_base_font)
-        painter.setPen(QColor("#F5F7FB"))
+        painter.setPen(QColor(theme.text_colour))
         painter.drawText(
             body_rect.adjusted(7, 3, -7, -4),
             int(Qt.TextFlag.TextWordWrap | Qt.TextFlag.TextWrapAnywhere
