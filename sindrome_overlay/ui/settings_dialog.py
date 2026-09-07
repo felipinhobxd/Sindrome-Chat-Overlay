@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..card_themes import CARD_THEME_ORDER
 from ..i18n import LANGUAGE_LABELS, SUPPORTED_LANGUAGES, tr
 from ..settings import Settings
 from ..sounds import NotificationSoundPlayer, SOUND_PRESETS
@@ -234,6 +235,12 @@ class SettingsDialog(QDialog):
         self.background_opacity, background_row = self._slider_row(self._current.background_opacity)
         self.card_opacity, card_row = self._slider_row(self._current.card_opacity)
 
+        self.card_theme = QComboBox()
+        for theme_key in CARD_THEME_ORDER:
+            self.card_theme.addItem(self._text(f"card_theme_{theme_key}"), theme_key)
+        theme_index = self.card_theme.findData(self._current.card_theme)
+        self.card_theme.setCurrentIndex(max(0, theme_index))
+
         self.font_size = QSpinBox()
         self.font_size.setRange(11, 30)
         self.font_size.setSuffix(" px")
@@ -255,6 +262,7 @@ class SettingsDialog(QDialog):
         form.addRow(self.check_for_updates)
         form.addRow(self._text("panel_opacity"), background_row)
         form.addRow(self._text("message_opacity"), card_row)
+        form.addRow(self._text("card_theme"), self.card_theme)
         form.addRow(self._text("font_size"), self.font_size)
         form.addRow(self._text("max_messages"), self.max_messages)
         form.addRow(self._text("remove_after"), self.lifetime)
@@ -395,6 +403,7 @@ class SettingsDialog(QDialog):
             click_through=self.click_through.isChecked(),
             background_opacity=self.background_opacity.value(),
             card_opacity=self.card_opacity.value(),
+            card_theme=str(self.card_theme.currentData() or ""),
             font_size=self.font_size.value(),
             max_messages=self.max_messages.value(),
             message_lifetime_seconds=self.lifetime.value(),
@@ -436,6 +445,7 @@ class SettingsDialog(QDialog):
         self.check_for_updates.setChecked(defaults.check_for_updates)
         self.background_opacity.setValue(defaults.background_opacity)
         self.card_opacity.setValue(defaults.card_opacity)
+        self.card_theme.setCurrentIndex(self.card_theme.findData(defaults.card_theme))
         self.font_size.setValue(defaults.font_size)
         self.max_messages.setValue(defaults.max_messages)
         self.lifetime.setValue(defaults.message_lifetime_seconds)

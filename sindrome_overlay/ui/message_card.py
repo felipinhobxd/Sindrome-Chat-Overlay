@@ -8,6 +8,7 @@ from PySide6.QtCore import QEvent, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QPixmap, QResizeEvent, QTextOption
 from PySide6.QtWidgets import QFrame, QLabel, QSizePolicy, QTextEdit, QWidget
 
+from ..card_themes import card_theme
 from ..emotes import build_message_html
 from ..i18n import tr
 from ..models import ChatBadge, ChatMessage
@@ -79,7 +80,10 @@ class EmoteMessageLabel(QTextEdit):
         self.setFocusPolicy(Qt.NoFocus)
         self.setWordWrapMode(QTextOption.WrapAtWordBoundaryOrAnywhere)
         self.document().setDocumentMargin(0)
-        self.setStyleSheet("background: transparent; color: #F5F7FB; border: none; padding: 0;")
+        self.setStyleSheet(
+            f"background: transparent; color: {card_theme(settings).text_colour}; "
+            "border: none; padding: 0;"
+        )
         self.viewport().setAutoFillBackground(False)
         policy = QSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
         policy.setHeightForWidth(True)
@@ -157,6 +161,7 @@ class TwitchBadgeLabel(_ElidedLabel):
         super().__init__(parent=parent)
         self.badge = badge
         self.fallback_text = fallback_text
+        self.settings = settings
         self.language = settings.language
         self.image_height = max(18, min(32, round(settings.font_size * 1.25)))
         self.asset_cache = asset_cache
@@ -199,7 +204,7 @@ class TwitchBadgeLabel(_ElidedLabel):
             self.setObjectName("MetaText")
             self.set_full_text(_short_badge(self.fallback_text, self.language))
             self.setStyleSheet(
-                "background: rgba(255,255,255,26); border-radius: 4px; "
+                f"background: {card_theme(self.settings).badge_background}; border-radius: 4px; "
                 "padding: 1px 4px; font-weight: 700;"
             )
         self.setToolTip(self.fallback_text)
@@ -250,7 +255,7 @@ class MessageCard(QFrame):
                 badge_label = _ElidedLabel(_short_badge(badge_text, settings.language), self)
                 badge_label.setObjectName("MetaText")
                 badge_label.setStyleSheet(
-                    "background: rgba(255,255,255,26); border-radius: 4px; "
+                    f"background: {card_theme(settings).badge_background}; border-radius: 4px; "
                     "padding: 1px 4px; font-weight: 700;"
                 )
                 badge_label.setToolTip(badge_text)

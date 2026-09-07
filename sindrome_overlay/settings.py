@@ -9,6 +9,7 @@ from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
+from .card_themes import DEFAULT_CARD_THEME, normalize_card_theme
 from .i18n import normalize_language
 from .profiles import normalize_custom_profiles, normalize_profile_ref
 from .sounds import DEFAULT_TWITCH_SOUND, DEFAULT_YOUTUBE_SOUND, normalize_sound_id
@@ -45,6 +46,7 @@ class Settings:
     click_through: bool = False
     background_opacity: int = 72
     card_opacity: int = 78
+    card_theme: str = DEFAULT_CARD_THEME
     font_size: int = 15
     max_messages: int = 150
     message_lifetime_seconds: int = 0
@@ -89,6 +91,7 @@ class Settings:
         self.youtube_api_key = self.youtube_api_key.strip()
         self.background_opacity = _clamp(self.background_opacity, 0, 100)
         self.card_opacity = _clamp(self.card_opacity, 0, 100)
+        self.card_theme = normalize_card_theme(self.card_theme)
         self.font_size = _clamp(self.font_size, 11, 30)
         self.max_messages = _clamp(self.max_messages, 20, 500)
         self.message_lifetime_seconds = _clamp(self.message_lifetime_seconds, 0, 600)

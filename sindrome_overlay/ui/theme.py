@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from ..card_themes import card_theme
 from ..settings import Settings
 
 
@@ -19,6 +20,7 @@ def build_stylesheet(settings: Settings) -> str:
     empty_alpha = _scaled_alpha(95, settings.background_opacity)
     empty_border_alpha = _scaled_alpha(45, settings.background_opacity)
     card_alpha = _alpha(settings.card_opacity)
+    theme = card_theme(settings)
     return f"""
         QWidget {{
             color: #F6F8FC;
@@ -99,16 +101,16 @@ def build_stylesheet(settings: Settings) -> str:
             border: none;
         }}
         QFrame#MessageBubble {{
-            background-color: rgba(3, 5, 9, {card_alpha});
+            background-color: rgba({theme.bubble_rgb_css}, {card_alpha});
             border: none;
             border-radius: 6px;
         }}
         QLabel#MessageText {{
-            color: #F5F7FB;
+            color: {theme.text_colour};
             background: transparent;
         }}
         QLabel#MetaText {{
-            color: #9BA8BE;
+            color: {theme.meta_colour};
             background: transparent;
             font-size: {max(10, settings.font_size - 3)}px;
         }}
