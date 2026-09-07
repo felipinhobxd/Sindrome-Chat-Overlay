@@ -6,8 +6,11 @@ import org.json.JSONObject;
 import java.io.IOException;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
+import okhttp3.Call;
 import okhttp3.HttpUrl;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
@@ -17,16 +20,26 @@ import okhttp3.Response;
 
 public final class NetClient {
     private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
-    private final OkHttpClient client;
+    // One shared connection pool and thread pool for the whole process:
+    // each OkHttpClient owns its own executor and keep-alive pool, and the
+    // app was creating one per provider, per key validation and one for
+    // emote downloads.
+    private static final OkHttpClient SHARED = new OkHttpClient.Builder()
+            .connectTimeout(12, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .writeTimeout(15, TimeUnit.SECONDS)
+            .followRedirects(true)
+            .followSslRedirects(true)
+            .build();
+
+    public static OkHttpClient sharedClient() {
+        return SHARED;
+    }
+
+    private final OkHttpClient client = SHARED;
+    private final Set<Call> inFlight = ConcurrentHashMap.newKeySet();
 
     public NetClient() {
-        client = new OkHttpClient.Builder()
-                .connectTimeout(12, TimeUnit.SECONDS)
-                .readTimeout(30, TimeUnit.SECONDS)
-                .writeTimeout(15, TimeUnit.SECONDS)
-                .followRedirects(true)
-                .followSslRedirects(true)
-                .build();
     }
 
     public ResponseData get(String url) throws IOException {
@@ -71,13 +84,20 @@ public final class NetClient {
     }
 
     private ResponseData execute(Request request) throws IOException {
-        try (Response response = client.newCall(request).execute()) {
+        Call call = client.newCall(request);
+        inFlight.add(call);
+        try (Response response = call.execute()) {
             String body = response.body() == null ? "" : response.body().string();
             return new ResponseData(response.code(), response.request().url().toString(), body);
+        } finally {
+            inFlight.remove(call);
         }
     }
 
-    public void cancelAll() { client.dispatcher().cancelAll(); }
+    /** Cancels only the requests issued through this NetClient instance. */
+    public void cancelAll() {
+        for (Call call : inFlight) call.cancel();
+    }
 
     private static void applyBrowserHeaders(Request.Builder builder, HttpUrl url) {
         builder.header("User-Agent", userAgent())

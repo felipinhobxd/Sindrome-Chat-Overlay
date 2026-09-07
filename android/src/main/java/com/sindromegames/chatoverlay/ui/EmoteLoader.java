@@ -8,6 +8,7 @@ import android.os.Looper;
 import android.util.LruCache;
 
 import com.sindromegames.chatoverlay.model.ChatEmote;
+import com.sindromegames.chatoverlay.net.NetClient;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -48,7 +49,7 @@ public final class EmoteLoader {
         return thread;
     });
     private final Handler main = new Handler(Looper.getMainLooper());
-    private final OkHttpClient http = new OkHttpClient();
+    private final OkHttpClient http = NetClient.sharedClient();
     private final File cacheDirectory;
     // Only touched from the single-threaded executor.
     private int downloadsSincePrune;
