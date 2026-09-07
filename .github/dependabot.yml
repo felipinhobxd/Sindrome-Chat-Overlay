@@ -33,6 +33,19 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    ignore:
+      # These AndroidX AAR versions require compileSdk 36/37, but the project
+      # compiles against SDK 35, the maximum recommended for AGP 8.8.2.
+      # Remove these rules when the project migrates to a newer
+      # AGP/compileSdk.
+      - dependency-name: "androidx.core:core"
+        versions: [">=1.16"]
+      - dependency-name: "androidx.core:core-ktx"
+        versions: [">=1.16"]
+      - dependency-name: "androidx.appcompat:appcompat"
+        versions: [">=1.8"]
+      - dependency-name: "com.google.android.material:material"
+        versions: [">=1.13"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
