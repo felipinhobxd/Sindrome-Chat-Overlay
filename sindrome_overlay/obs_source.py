@@ -359,7 +359,7 @@ class _ObsRequestHandler(BaseHTTPRequestHandler):
         host = (self.headers.get("Host") or "").strip().lower()
         if not host:
             return False
-        port = self.server.server_address[1]  # type: ignore[attr-defined]
+        port = self.server.server_address[1]  # type: ignore[index]
         allowed = {f"127.0.0.1:{port}", f"localhost:{port}"}
         if port == 80:
             allowed.update({"127.0.0.1", "localhost"})

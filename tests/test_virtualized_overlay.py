@@ -60,7 +60,7 @@ class VirtualizedOverlayTests(unittest.TestCase):
             for _ in range(5):
                 app.processEvents()
 
-            self.assertIsInstance(window.scroll, QListView)
+            self.assertIsInstance(window.message_view, QListView)
             self.assertEqual(len(window.messages), 500)
             self.assertEqual(window.message_model.rowCount(), 500)
             self.assertIsNotNone(window.message_view)
@@ -69,8 +69,8 @@ class VirtualizedOverlayTests(unittest.TestCase):
             self.assertLess(window.message_view.active_editor_count, 40)
             self.assertLess(len(window.findChildren(MessageCard)), 40)
             self.assertEqual(
-                window.scroll.verticalScrollBar().value(),
-                window.scroll.verticalScrollBar().maximum(),
+                window.message_view.verticalScrollBar().value(),
+                window.message_view.verticalScrollBar().maximum(),
             )
 
             window._remove_message_id("virtual-250")

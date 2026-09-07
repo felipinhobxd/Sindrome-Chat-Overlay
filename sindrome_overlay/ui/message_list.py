@@ -46,10 +46,10 @@ class MessageListModel(QAbstractListModel):
         super().__init__(parent)
         self._rows: list[_MessageRow] = []
 
-    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802 - Qt API
+    def rowCount(self, parent: QModelIndex | QPersistentModelIndex = QModelIndex()) -> int:  # noqa: N802 - Qt API
         return 0 if parent.isValid() else len(self._rows)
 
-    def data(self, index: QModelIndex, role: int = int(Qt.ItemDataRole.DisplayRole)):
+    def data(self, index: QModelIndex | QPersistentModelIndex, role: int = int(Qt.ItemDataRole.DisplayRole)):
         if not index.isValid() or not 0 <= index.row() < len(self._rows):
             return None
         row = self._rows[index.row()]
@@ -61,7 +61,7 @@ class MessageListModel(QAbstractListModel):
             return row.created_monotonic
         return None
 
-    def flags(self, index: QModelIndex):
+    def flags(self, index: QModelIndex | QPersistentModelIndex):
         if not index.isValid():
             return Qt.ItemFlag.NoItemFlags
         # Persistent editors are opened only for visible rows. The editable flag is
@@ -163,7 +163,7 @@ class MessageCardDelegate(QStyledItemDelegate):
         self,
         parent: QWidget,
         option: QStyleOptionViewItem,
-        index: QModelIndex,
+        index: QModelIndex | QPersistentModelIndex,
     ) -> QWidget | None:
         message = index.data(MessageListModel.MessageRole)
         if not isinstance(message, ChatMessage):
@@ -174,19 +174,19 @@ class MessageCardDelegate(QStyledItemDelegate):
         card.layout_changed.connect(lambda: self._emit_size_hint_changed(persistent))
         return card
 
-    def setEditorData(self, editor: QWidget, index: QModelIndex) -> None:  # noqa: N802
+    def setEditorData(self, editor: QWidget, index: QModelIndex | QPersistentModelIndex) -> None:  # noqa: N802
         # MessageCard is immutable for the lifetime of one row; a new editor is
         # created when an index is recycled into the visible window.
         return
 
-    def setModelData(self, editor: QWidget, model, index: QModelIndex) -> None:  # noqa: N802
+    def setModelData(self, editor: QWidget, model, index: QModelIndex | QPersistentModelIndex) -> None:  # noqa: N802
         return
 
     def updateEditorGeometry(  # noqa: N802 - Qt API
         self,
         editor: QWidget,
         option: QStyleOptionViewItem,
-        index: QModelIndex,
+        index: QModelIndex | QPersistentModelIndex,
     ) -> None:
         if not isinstance(editor, MessageCard):
             editor.setGeometry(option.rect)
@@ -201,7 +201,7 @@ class MessageCardDelegate(QStyledItemDelegate):
             persistent = QPersistentModelIndex(index)
             QTimer.singleShot(0, lambda: self._emit_size_hint_changed(persistent))
 
-    def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:  # noqa: N802
+    def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> QSize:  # noqa: N802
         view = self.parent()
         width = option.rect.width()
         if isinstance(view, QListView):
@@ -222,7 +222,7 @@ class MessageCardDelegate(QStyledItemDelegate):
         self,
         painter: QPainter,
         option: QStyleOptionViewItem,
-        index: QModelIndex,
+        index: QModelIndex | QPersistentModelIndex,
     ) -> None:
         """Paint a lightweight fallback only until the real MessageCard is open.
 
@@ -291,7 +291,7 @@ class MessageCardDelegate(QStyledItemDelegate):
         # visible, updateEditorGeometry records the exact widget size for that width.
         return max(42, 2 + meta_height + 2 + 3 + body_height + 4 + 3 + 4)
 
-    def _cache_key(self, index: QModelIndex, width: int) -> tuple[str, int, tuple[object, ...]] | None:
+    def _cache_key(self, index: QModelIndex | QPersistentModelIndex, width: int) -> tuple[str, int, tuple[object, ...]] | None:
         # Keep the two recent widths so showing/hiding the scrollbar cannot erase
         # exact heights and oscillate forever between short estimates and tall rows.
         # Bounding this also avoids retaining an entry for every pixel of a resize.

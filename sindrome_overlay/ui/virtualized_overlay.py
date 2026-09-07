@@ -19,6 +19,7 @@ from ..profiles import (
     resolve_profile,
 )
 from ..settings import Settings, SettingsStore
+from .settings_dialog import SettingsDialog as _BaseSettingsDialog
 from .feature_settings_dialog import SettingsDialog
 from .message_list import MessageCardDelegate, MessageListModel, VirtualMessageListView
 from .overlay import OverlayShell
@@ -110,8 +111,8 @@ class OverlayWindow(OverlayShell):
         self.message_stack.setCurrentWidget(self.empty_state)
         layout.addWidget(self.message_stack, 1)
 
-        # Keep the public/legacy scroll attribute used by eventFilter and smoke tests.
-        self.scroll = self.message_view
+    def _settings_dialog_class(self) -> type[_BaseSettingsDialog]:
+        return SettingsDialog
 
     def _build_tray(self, icon) -> None:
         super()._build_tray(icon)
@@ -128,8 +129,9 @@ class OverlayWindow(OverlayShell):
 
     def _retranslate_ui(self, *, reset_statuses: bool = False) -> None:
         super()._retranslate_ui(reset_statuses=reset_statuses)
-        if getattr(self, "profile_menu", None) is not None:
-            self.profile_menu.setTitle(feature_tr(self.settings.language, "profiles_menu"))
+        profile_menu = getattr(self, "profile_menu", None)
+        if profile_menu is not None:
+            profile_menu.setTitle(feature_tr(self.settings.language, "profiles_menu"))
             self._refresh_profile_menu()
 
     def _refresh_profile_menu(self) -> None:
@@ -184,7 +186,7 @@ class OverlayWindow(OverlayShell):
     def _settings_dialog_extras(self) -> dict:
         return {"obs_source_url": self.obs_source.url if self.obs_source.running else ""}
 
-    def _connect_settings_dialog(self, dialog: SettingsDialog) -> None:
+    def _connect_settings_dialog(self, dialog: _BaseSettingsDialog) -> None:
         dialog.diagnostics_requested.connect(lambda: self._export_diagnostics(dialog))
 
     def _settings_applied(self) -> None:
