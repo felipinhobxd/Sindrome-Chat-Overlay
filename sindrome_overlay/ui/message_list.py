@@ -257,7 +257,7 @@ class MessageCardDelegate(QStyledItemDelegate):
         painter.setBrush(QColor(3, 5, 9, alpha))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.drawRoundedRect(body_rect, 6, 6)
-        painter.setFont(base_font)
+        painter.setFont(_base_font)
         painter.setPen(QColor("#F5F7FB"))
         painter.drawText(
             body_rect.adjusted(7, 3, -7, -4),
