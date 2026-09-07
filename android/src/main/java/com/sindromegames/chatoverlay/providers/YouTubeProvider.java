@@ -256,7 +256,13 @@ public final class YouTubeProvider extends ChatProvider {
                 headers.put(apiHeader, apiKey);
                 V3DataLiveChatMessageServiceGrpc.V3DataLiveChatMessageServiceBlockingStub stub =
                         V3DataLiveChatMessageServiceGrpc.newBlockingStub(ClientInterceptors.intercept(
-                                channel, MetadataUtils.newAttachHeadersInterceptor(headers)));
+                                channel, MetadataUtils.newAttachHeadersInterceptor(headers)))
+                                // Without a deadline hasNext()/next() can block
+                                // forever on a stalled stream that keepalive
+                                // pings fail to detect. DEADLINE_EXCEEDED is
+                                // handled by the catch below (backoff, then
+                                // fallback to polling after repeated failures).
+                                .withDeadlineAfter(120, TimeUnit.SECONDS);
                 LiveChatMessageListRequest.Builder request = LiveChatMessageListRequest.newBuilder()
                         .setLiveChatId(chatId).setHl(language).setProfileImageSize(32)
                         .addPart("snippet").addPart("authorDetails");
