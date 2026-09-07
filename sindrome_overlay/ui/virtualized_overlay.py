@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QFileDialog, QLabel, QMessageBox, QStackedWidget
 from .. import __version__
 from ..diagnostics import export_diagnostics
 from ..feature_i18n import feature_tr
+from ..filters import should_display
 from ..obs_source import ObsChatSourceServer, ObsSourceConfig
 from ..profiles import (
     apply_overlay_profile,
@@ -354,11 +355,11 @@ class OverlayWindow(_LegacyOverlayWindow):
 
     def _rebuild_cards(self) -> None:
         history = list(self.messages)
-        filtered = []
-        for message in history[-self.settings.max_messages :]:
-            if self.settings.hide_commands and message.text.lstrip().startswith("!"):
-                continue
-            filtered.append(message)
+        filtered = [
+            message
+            for message in history[-self.settings.max_messages :]
+            if should_display(message, self.settings)
+        ]
 
         self.messages[:] = filtered
         self.cards.clear()

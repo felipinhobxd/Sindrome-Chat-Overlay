@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
 
 from .. import __version__
 from ..events import ProviderEvent
+from ..filters import should_display
 from ..i18n import tr
 from ..models import ChatMessage
 from ..providers import TwitchProvider, YouTubeProvider
@@ -738,7 +739,7 @@ class OverlayWindow(QMainWindow):
                 self.clear_messages(event.platform)
 
     def add_message(self, message: ChatMessage) -> None:
-        if self.settings.hide_commands and message.text.lstrip().startswith("!"):
+        if not should_display(message, self.settings):
             return
         if message.message_id and message.message_id in self.seen_ids:
             return
