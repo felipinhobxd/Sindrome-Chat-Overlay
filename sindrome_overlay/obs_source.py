@@ -511,19 +511,78 @@ body {
     return row;
   }
 
+  let nodes = new Map();
+  let renderedConfigKey = '';
+
+  function configKey(config) {
+    return [
+      config.font_size, config.message_background_opacity,
+      config.show_timestamps, config.show_platform_labels, config.show_badges,
+    ].join('|');
+  }
+
   function render(state) {
     const config = state.config || {};
+    const messages = state.messages || [];
     const fontSize = Math.max(11, Math.min(40, Number(config.font_size) || 20));
     const opacity = Math.max(0, Math.min(100, Number(config.message_background_opacity) || 0)) / 100;
     document.documentElement.style.setProperty('--font-size', `${fontSize}px`);
     document.documentElement.style.setProperty('--emote-size', `${Math.round(fontSize * 1.5)}px`);
     document.documentElement.style.setProperty('--bubble-alpha', String(opacity));
 
-    const fragment = document.createDocumentFragment();
-    for (const message of (state.messages || [])) {
-      fragment.appendChild(messageNode(message, config));
+    const key = configKey(config);
+    if (key !== renderedConfigKey) {
+      // Appearance flags changed: every row depends on them, so rebuild once.
+      nodes.clear();
+      chat.replaceChildren();
+      renderedConfigKey = key;
     }
-    chat.replaceChildren(fragment);
+
+    const ids = [];
+    let idsUsable = true;
+    for (const message of messages) {
+      const id = String(message.message_id || '');
+      if (!id || ids.includes(id)) { idsUsable = false; break; }
+      ids.push(id);
+    }
+    if (!idsUsable) {
+      // Rare fallback (missing/duplicate ids): rebuild synchronously.
+      nodes.clear();
+      const fragment = document.createDocumentFragment();
+      for (const message of messages) fragment.appendChild(messageNode(message, config));
+      chat.replaceChildren(fragment);
+      chat.scrollTop = chat.scrollHeight;
+      return;
+    }
+
+    // Fast path: DOM already matches the snapshot exactly (revision-only or
+    // unchanged content) — skip all DOM work.
+    const children = chat.children;
+    if (children.length === messages.length) {
+      let same = true;
+      for (let index = 0; index < messages.length; index++) {
+        if (children[index] !== nodes.get(ids[index])) { same = false; break; }
+      }
+      if (same) { chat.scrollTop = chat.scrollHeight; return; }
+    }
+
+    // Incremental path: create only new rows, re-append existing ones in
+    // snapshot order (appendChild moves existing nodes), drop removed rows.
+    for (let index = 0; index < messages.length; index++) {
+      const id = ids[index];
+      let node = nodes.get(id);
+      if (!node) {
+        node = messageNode(messages[index], config);
+        nodes.set(id, node);
+      }
+      if (chat.lastElementChild !== node) chat.appendChild(node);
+    }
+    for (const [id, node] of nodes) {
+      if (!ids.includes(id)) {
+        node.remove();
+        nodes.delete(id);
+      }
+    }
     chat.scrollTop = chat.scrollHeight;
   }
 
