@@ -8,6 +8,21 @@ and add the section **before** publishing the version bump.
 
 ## [Unreleased]
 
+## [1.9.1] - 2026-09-08
+
+### Desktop
+
+- Fixed the settings dialog failing to open on the published Windows build:
+  the overlay injected the OBS browser-source URL into the stock settings
+  dialog, which does not accept that keyword, so clicking the settings button
+  or the tray entry silently did nothing whenever the OBS source was running.
+  The concrete overlay now supplies its extended dialog (profiles, OBS source
+  and diagnostics tabs) through a shell hook, and regression tests lock the
+  dialog-constructor contract so this mismatch cannot ship again.
+- Settings dialogs opened from the overlay now consistently expose the
+  profiles, OBS source and diagnostics tabs regardless of how the flow was
+  triggered.
+
 ### Android
 
 - Fixed the first notification sound after app start being silent: SoundPool
