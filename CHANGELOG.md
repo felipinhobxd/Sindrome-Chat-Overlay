@@ -8,6 +8,30 @@ and add the section **before** publishing the version bump.
 
 ## [Unreleased]
 
+
+## [1.9.2] - 2026-09-08
+
+### Desktop
+
+- Added optional automatic Windows game profiles. Associate a game's executable
+  with a built-in or custom layout; Alt+Tab preserves the game layout, closing
+  the game restores the original, and automation can be paused from the tray.
+- Automatic profiles keep temporary layouts out of saved settings, preserve
+  chat connections and use a bounded local detector without new dependencies.
+- Reduced avoidable YouTube compatibility-mode delay by honoring short server
+  continuations instead of imposing a one-second minimum. Zero-delay replies
+  use a 100 ms guard; official API intervals and retry backoff are preserved.
+  Actual message latency still depends on YouTube and the network.
+
+### Android
+
+- Aligned the release version to 1.9.2 and incremented versionCode to 192.
+
+### Tests
+
+- Added regression coverage for profile switching, Alt+Tab, process exit and
+  handle cleanup, settings persistence, and YouTube continuation timing.
+
 ## [1.9.1] - 2026-09-08
 
 ### Desktop
