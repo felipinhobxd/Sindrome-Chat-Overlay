@@ -190,7 +190,7 @@ def build_stylesheet(settings: Settings) -> str:
             background: #6542DD;
             border-color: #7A57EB;
         }}
-        QLineEdit, QSpinBox {{
+        QLineEdit, QSpinBox, QListWidget#GameProfiles {{
             background: #171E2D;
             border: 1px solid #354057;
             border-radius: 7px;

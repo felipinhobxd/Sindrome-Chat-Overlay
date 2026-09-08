@@ -926,7 +926,7 @@ class OverlayShell(QMainWindow):
         updated.window_height = self.settings.window_height
         self.settings = updated
         try:
-            self.store.save(self.settings)
+            self.store.save(self._settings_for_save())
         except (OSError, ValueError) as exc:
             self.log.warning("Unable to save settings: %s", exc)
         self.notification_sounds.reset_limit()
@@ -941,6 +941,9 @@ class OverlayShell(QMainWindow):
         self._restart_providers()
         self.set_click_through(self.settings.click_through)
         self._settings_applied()
+
+    def _settings_for_save(self) -> Settings:
+        return self.settings
 
     def _settings_applied(self) -> None:
         return
@@ -988,7 +991,7 @@ class OverlayShell(QMainWindow):
         self._set_native_click_through(enabled)
         try:
             self._remember_geometry()
-            self.store.save(self.settings)
+            self.store.save(self._settings_for_save())
         except OSError as exc:
             self.log.warning("Unable to save lock state: %s", exc)
         if enabled and self.tray and self._first_lock_notice:
@@ -1050,7 +1053,7 @@ class OverlayShell(QMainWindow):
             self._fallback_shortcut.setEnabled(False)
         self._remember_geometry()
         try:
-            self.store.save(self.settings)
+            self.store.save(self._settings_for_save())
         except OSError as exc:
             self.log.warning("Unable to save settings on close: %s", exc)
         self._stop_providers()

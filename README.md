@@ -44,6 +44,7 @@ You can replace either channel in the app settings.
 - Native Windows global `Ctrl + Shift + O` shortcut locks or unlocks mouse clicks with one press, even when another application has focus.
 - System tray menu for showing, hiding, configuring, locking, or closing the app.
 - Configurable font size, opacity, message limit, and message lifetime.
+- Optional automatic Windows game profiles: associate a game's `.exe` with a saved layout.
 - English and Brazilian Portuguese interface languages.
 - Checks for a newer stable version in the background, asks before downloading it, verifies the exact release asset, size, and SHA-256 checksum, then asks again before running the installer.
 - Persistent user settings and a rotating technical log at `%APPDATA%\SindromeChatOverlay\overlay.log`.
@@ -74,6 +75,13 @@ The main window, settings, system tray, notifications, platform statuses, automa
 - Select the lock button or press `Ctrl + Shift + O` to enable click-through mode.
 - When locked, use the same shortcut or the system tray icon to unlock the overlay.
 - The `⌫` button only clears the local overlay; it does not delete platform messages.
+
+Under **Overlay profiles**, select a built-in or saved profile, associate the game's actual
+`.exe` (not its launcher), and enable **Automatic profiles**. Bringing that game to the
+foreground applies its layout within about one second. Alt+Tab keeps it; closing the game
+restores your previous layout. The tray checkbox pauses/resumes automation. Selecting a
+manual profile pauses it too. Opening settings temporarily restores your original layout.
+Detection stays local and uses no additional dependencies. Up to 32 games can be associated.
 
 Windowed and borderless-fullscreen games provide the best compatibility. The app uses the native Windows TOPMOST Z-order, reapplies it after restore, and does not activate the overlay while click-through is enabled.
 
@@ -110,6 +118,11 @@ When a Data API key is present, the app:
 5. falls back to `liveChatMessages.list` only if the streaming transport repeatedly cannot be established. The fallback waits for the exact `pollingIntervalMillis` returned by YouTube.
 
 Without a key, automatic mode reads the public live-chat data used by YouTube's web page. This mode requires no account, but it uses an undocumented public interface that YouTube may change. OAuth is not used because the overlay only reads public chat.
+
+On Windows, short compatibility-mode continuations no longer incur an extra one-second
+minimum wait (zero-delay replies use a 100 ms guard). Longer server intervals, official API
+polling intervals and failure backoff are preserved. This removes avoidable client delay;
+it cannot eliminate YouTube's delivery or network latency.
 
 | Item | Purpose |
 | --- | --- |

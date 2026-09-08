@@ -11,7 +11,7 @@ from typing import Any
 
 from .card_themes import DEFAULT_CARD_THEME, normalize_card_theme
 from .i18n import normalize_language
-from .profiles import normalize_custom_profiles, normalize_profile_ref
+from .profiles import normalize_custom_profiles, normalize_game_profiles, normalize_profile_ref
 from .sounds import DEFAULT_TWITCH_SOUND, DEFAULT_YOUTUBE_SOUND, normalize_sound_id
 from .url_utils import normalize_twitch_channel, normalize_youtube_input
 
@@ -77,6 +77,8 @@ class Settings:
     obs_message_background_opacity: int = 72
     overlay_profiles: dict[str, dict[str, Any]] = field(default_factory=dict)
     active_overlay_profile: str = ""
+    automatic_profiles_enabled: bool = False
+    game_profiles: dict[str, str] = field(default_factory=dict)
 
     def normalized(self) -> Settings:
         self.language = normalize_language(self.language)
@@ -118,6 +120,8 @@ class Settings:
             self.active_overlay_profile,
             self.overlay_profiles,
         )
+        self.automatic_profiles_enabled = self.automatic_profiles_enabled is True
+        self.game_profiles = normalize_game_profiles(self.game_profiles, self.overlay_profiles)
         return self
 
 

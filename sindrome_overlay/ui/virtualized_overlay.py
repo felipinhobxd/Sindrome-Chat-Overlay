@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QCloseEvent
@@ -11,9 +12,11 @@ from PySide6.QtWidgets import QFileDialog, QLabel, QMessageBox, QStackedWidget
 from .. import __version__
 from ..diagnostics import export_diagnostics
 from ..feature_i18n import feature_tr
+from ..game_profiles import WindowsGameDetector
 from ..obs_source import ObsChatSourceServer, ObsSourceConfig
 from ..profiles import (
     apply_overlay_profile,
+    capture_overlay_profile,
     iter_profile_choices,
     normalize_profile_ref,
     resolve_profile,
@@ -34,9 +37,17 @@ class OverlayWindow(OverlayShell):
         store: SettingsStore,
         logger: logging.Logger,
     ) -> None:
+        self._game_detector = WindowsGameDetector()
+        self._automatic_baseline: tuple[dict[str, Any], str] | None = None
+        self._automatic_ref = ""
         self.obs_source = ObsChatSourceServer(logger, self._obs_config(settings))
         super().__init__(settings, store, logger)
         self._sync_obs_source(seed_history=True)
+        self._automatic_timer = QTimer(self)
+        self._automatic_timer.setInterval(1000)
+        self._automatic_timer.timeout.connect(self._poll_game_profile)
+        self.destroyed.connect(self._game_detector.close)
+        self._configure_automatic_profiles()
 
     @staticmethod
     def _obs_config(settings: Settings) -> ObsSourceConfig:
@@ -158,26 +169,110 @@ class OverlayWindow(OverlayShell):
                 lambda _checked=False, ref=profile_ref: self._apply_overlay_profile_ref(ref)
             )
             menu.addAction(action)
+        menu.addSeparator()
+        automatic = QAction(feature_tr(self.settings.language, "automatic_profiles_enable"), menu)
+        automatic.setCheckable(True)
+        automatic.setChecked(self.settings.automatic_profiles_enabled)
+        automatic.setEnabled(self._game_detector.available and bool(self.settings.game_profiles))
+        automatic.triggered.connect(self._set_automatic_profiles_enabled)
+        menu.addAction(automatic)
 
     def _apply_overlay_profile_ref(self, profile_ref: str) -> None:
         values = resolve_profile(profile_ref, self.settings.overlay_profiles)
         if values is None:
             return
+        # An explicit manual selection wins until automation is enabled again.
+        self.settings.automatic_profiles_enabled = False
+        self._configure_automatic_profiles()
         self._remember_geometry()
         updated = apply_overlay_profile(self.settings, values)
         updated.active_overlay_profile = profile_ref
         self.settings = updated
         try:
-            self.store.save(self.settings)
+            self.store.save(self._settings_for_save())
         except OSError as exc:
             self.log.warning("Unable to save overlay profile selection: %s", exc)
 
+        self._present_profile()
+
+    def _present_profile(self) -> None:
         self._restore_geometry()
         self._apply_window_flags()
         self._apply_visual_settings()
         self._retranslate_ui()
         self._rebuild_cards()
         self._refresh_profile_menu()
+
+    def _settings_for_save(self) -> Settings:
+        # Hotkeys and click-through also save settings. Never persist the
+        # temporary game layout, even through those paths or after a crash.
+        if self._automatic_baseline is None:
+            return self.settings
+        values, ref = self._automatic_baseline
+        saved = apply_overlay_profile(self.settings, values)
+        saved.active_overlay_profile = ref
+        return saved
+
+    def _restore_automatic_profile(self) -> None:
+        if self._automatic_baseline is None:
+            return
+        self.settings = self._settings_for_save()
+        self._automatic_baseline = None
+        self._automatic_ref = ""
+        self._present_profile()
+
+    def _configure_automatic_profiles(self) -> None:
+        enabled = (
+            self.settings.automatic_profiles_enabled
+            and self._game_detector.available
+            and bool(self.settings.game_profiles)
+        )
+        if enabled:
+            self._automatic_timer.start()
+        else:
+            self._automatic_timer.stop()
+            self._game_detector.close()
+            self._restore_automatic_profile()
+
+    def _set_automatic_profiles_enabled(self, enabled: bool) -> None:
+        self.settings.automatic_profiles_enabled = enabled
+        self._configure_automatic_profiles()
+        try:
+            self.store.save(self._settings_for_save())
+        except OSError as exc:
+            self.log.warning("Unable to save automatic profile preference: %s", exc)
+        self._refresh_profile_menu()
+
+    def _poll_game_profile(self) -> None:
+        if self._shutting_down or not self.settings.automatic_profiles_enabled:
+            return
+        ref = self._game_detector.profile(self.settings.game_profiles)
+        if ref == self._automatic_ref:
+            return
+        values = resolve_profile(ref, self.settings.overlay_profiles)
+        if values is None:
+            self._restore_automatic_profile()
+            return
+        if self._automatic_baseline is None:
+            self._remember_geometry()
+            self._automatic_baseline = (
+                capture_overlay_profile(self.settings), self.settings.active_overlay_profile,
+            )
+        # Every game starts from the original layout, so partial profiles do
+        # not inherit the previous game's position or appearance.
+        self.settings = apply_overlay_profile(self._settings_for_save(), values)
+        self.settings.active_overlay_profile = ref
+        self._automatic_ref = ref
+        self._present_profile()
+
+    def open_settings(self) -> None:
+        self._automatic_timer.stop()
+        self._restore_automatic_profile()
+        try:
+            super().open_settings()
+        finally:
+            if not self._shutting_down:
+                self._configure_automatic_profiles()
 
     def _before_settings_dialog(self) -> None:
         # Capture the actual current window geometry before a custom profile can be saved.
@@ -196,6 +291,8 @@ class OverlayWindow(OverlayShell):
         self._sync_obs_source(seed_history=True)
         self._restore_geometry()
         self._refresh_profile_menu()
+
+        self._configure_automatic_profiles()
 
     def _export_diagnostics(self, parent=None) -> None:
         downloads = Path.home() / "Downloads"
@@ -328,5 +425,8 @@ class OverlayWindow(OverlayShell):
         super()._remove_author_id(author_id)
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        self._automatic_timer.stop()
+        self._game_detector.close()
+        self._restore_automatic_profile()
         self.obs_source.stop()
         super().closeEvent(event)
