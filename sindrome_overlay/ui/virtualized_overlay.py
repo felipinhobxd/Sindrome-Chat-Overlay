@@ -5,9 +5,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QThread, QTimer
 from PySide6.QtGui import QAction, QCloseEvent
-from PySide6.QtWidgets import QFileDialog, QLabel, QMessageBox, QStackedWidget
+from PySide6.QtWidgets import QApplication, QFileDialog, QLabel, QMessageBox, QStackedWidget
 
 from .. import __version__
 from ..diagnostics import export_diagnostics
@@ -22,6 +22,7 @@ from ..profiles import (
     resolve_profile,
 )
 from ..settings import Settings, SettingsStore
+from ..remote_control import remote_control_state, validate_remote_command
 from .settings_dialog import SettingsDialog as _BaseSettingsDialog
 from .feature_settings_dialog import SettingsDialog
 from .message_list import MessageCardDelegate, MessageListModel, VirtualMessageListView
@@ -202,6 +203,52 @@ class OverlayWindow(OverlayShell):
         self._retranslate_ui()
         self._rebuild_cards()
         self._refresh_profile_menu()
+
+    def apply_remote_command(self, payload: object) -> dict[str, Any]:
+        """Execute an authenticated command on the GUI thread, without reconnecting chat.
+
+        The future transport owns authentication and queuing. Local modal dialogs
+        take priority so a remote change cannot conflict with unsaved settings.
+        """
+        if QThread.currentThread() != self.thread():
+            raise RuntimeError("Remote commands require the overlay thread")
+        if self._shutting_down or QApplication.activeModalWidget() is not None:
+            raise RuntimeError("Overlay is busy")
+        command = validate_remote_command(payload, self.settings)
+        action = command["action"]
+        if action == "apply_profile":
+            self._apply_overlay_profile_ref(command["value"])
+        elif action == "clear_messages":
+            self.clear_messages()
+        elif action == "set_click_through":
+            if self.settings.click_through != command["value"]:
+                self.set_click_through(command["value"])
+        else:
+            values = (
+                command["value"] if action == "set_appearance"
+                else {"auto_scroll": command["value"]}
+            )
+            if any(getattr(self.settings, field) != value for field, value in values.items()):
+                # Adopt the current game layout as a manual layout. Editing the
+                # font or scrolling must not jump back to the pre-game geometry.
+                self._remember_geometry()
+                self.settings.automatic_profiles_enabled = False
+                self._automatic_baseline = None
+                self._automatic_ref = ""
+                self._configure_automatic_profiles()
+                self.settings = apply_overlay_profile(self.settings, values)
+                self.settings.active_overlay_profile = ""
+                if action == "set_appearance":
+                    self._apply_visual_settings()
+                    self._rebuild_cards()
+                elif self.settings.auto_scroll:
+                    self._schedule_scroll_to_bottom()
+                self._refresh_profile_menu()
+                try:
+                    self.store.save(self._settings_for_save())
+                except OSError as exc:
+                    self.log.warning("Unable to save remote overlay settings: %s", exc)
+        return remote_control_state(self.settings)
 
     def _settings_for_save(self) -> Settings:
         # Hotkeys and click-through also save settings. Never persist the
