@@ -4,6 +4,19 @@ from typing import Any
 
 _TEXT: dict[str, dict[str, str]] = {
     "en": {
+        "remote_title": "Phone remote control",
+        "remote_help": (
+            "Generate a code on this PC and enter it on your phone. "
+            "Only one phone can have access at a time."
+        ),
+        "remote_authorized": "A phone has access to the overlay.",
+        "remote_no_access": "No phone has access.",
+        "remote_code": "Pairing code",
+        "remote_expires": "Code expires in {seconds} s.",
+        "remote_no_code": "No active code. Generate one to pair a phone.",
+        "remote_generate": "Generate new code",
+        "remote_revoke": "Revoke access",
+        "remote_close": "Close",
         "automatic_profiles": "Automatic profiles (Windows)",
         "automatic_profiles_enable": "Enable automatic profiles",
         "automatic_profiles_help": (
@@ -68,6 +81,19 @@ _TEXT: dict[str, dict[str, str]] = {
         "obs_unavailable": "OBS source is disabled. Enable it and save settings first.",
     },
     "pt-BR": {
+        "remote_title": "Controle pelo celular",
+        "remote_help": (
+            "Gere um código neste PC e digite-o no celular. "
+            "Apenas um celular pode ter acesso por vez."
+        ),
+        "remote_authorized": "Um celular tem acesso ao overlay.",
+        "remote_no_access": "Nenhum celular tem acesso.",
+        "remote_code": "Código de pareamento",
+        "remote_expires": "O código expira em {seconds} s.",
+        "remote_no_code": "Nenhum código ativo. Gere um para parear um celular.",
+        "remote_generate": "Gerar novo código",
+        "remote_revoke": "Revogar acesso",
+        "remote_close": "Fechar",
         "automatic_profiles": "Perfis automáticos (Windows)",
         "automatic_profiles_enable": "Ativar perfis automáticos",
         "automatic_profiles_help": (

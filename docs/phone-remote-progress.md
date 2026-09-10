@@ -10,18 +10,29 @@ Concluído:
 - Fonte, opacidades, rolagem, perfis, click-through e limpeza do histórico local.
 - Base de pareamento em `sindrome_overlay/remote_pairing.py`: código de uso único
   por 2 minutos, 5 tentativas, uma sessão de 8 horas e revogação. Tudo em memória.
+- Tela local em `sindrome_overlay/ui/remote_pairing_dialog.py`, em português e
+  inglês: gerar código, contagem regressiva, estado de autorização e revogação.
+  Fechar, ocultar ou pressionar Esc cancela o código pendente e para o timer,
+  preservando um celular já autorizado. Estado público não contém credenciais.
+- Corrigidos callbacks de layout pendentes após destruir o chat: os timers agora
+  usam o objeto Qt como contexto, com teste de regressão de destruição.
 
 Ainda não existe conexão PC–celular. Nenhum servidor foi iniciado e nenhuma
-nova versão foi publicada. A base de pareamento ainda precisa ser integrada.
+nova versão foi publicada. A tela ainda não aparece no menu: será integrada
+quando o transporte protegido estiver pronto, para não oferecer um controle
+sem conexão. Nenhuma configuração ou credencial de pareamento é persistida.
 
-Próxima etapa pequena: interface no PC para ativar/desativar o controle,
-mostrar o código e revogar a sessão. Depois: transporte protegido na rede local,
-fila limitada até a thread Qt e interface no celular. Nunca expor códigos/tokens
+Próxima etapa pequena: transporte protegido na rede local para o pareamento.
+Depois: ligar ativação/desativação e a tela ao menu do PC, manter uma única
+instância da tela, revogar ao desligar/encerrar, implementar a fila limitada até
+a thread Qt e a interface no celular. Nunca expor códigos/tokens
 em logs; não reutilizar a fonte OBS como endpoint público de controle.
 Revalidar a sessão ao executar comandos na thread Qt, inclusive após revogação.
 
 Validação focada: `python -m unittest discover -s tests -p 'test_remote*.py'` e
 `python -m mypy`. Testes Qt usam `QT_QPA_PLATFORM=offscreen`.
-Resultado desta etapa: 22 testes passaram; mypy passou em 40 arquivos.
+Resultado desta etapa: 29 testes `test_remote*.py` passaram sem erros de callbacks
+Qt; `test_message*.py` teve 11 aprovados e 2 exclusivos de Windows ignorados no
+Linux; mypy passou em 41 arquivos.
 Só integrar na main e gerar nova build quando a funcionalidade estiver completa
 e os workflows Windows/Android/supply-chain passarem.

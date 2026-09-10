@@ -13,6 +13,7 @@ from PySide6.QtWidgets import QApplication, QDialog
 
 from sindrome_overlay.models import ChatMessage
 from sindrome_overlay.settings import Settings, SettingsStore
+from sindrome_overlay.ui.message_list import MessageListModel, VirtualMessageListView
 from sindrome_overlay.ui.virtualized_overlay import OverlayWindow
 
 
@@ -148,3 +149,14 @@ class RemoteControlUiTests(unittest.TestCase):
         with patch.object(self.window, "_shutting_down", True), self.assertRaises(RuntimeError):
             self.window.apply_remote_command({"action": "set_auto_scroll", "value": False})
         self.assertTrue(self.window.settings.auto_scroll)
+
+    def test_destroyed_chat_view_cancels_pending_layout_callbacks(self):
+        model = MessageListModel()
+        view = VirtualMessageListView(model)
+        view.schedule_editor_refresh()
+        view.relayout_visible_items()
+        with patch("sys.excepthook") as errors:
+            view.deleteLater()
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+            QTest.qWait(10)
+        errors.assert_not_called()

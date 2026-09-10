@@ -7,10 +7,18 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import math
 import secrets
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class PairingStatus:
+    code_seconds: int
+    session_active: bool
 
 
 class RemotePairing:
@@ -63,6 +71,24 @@ class RemotePairing:
             return self._session_hash is not None and hmac.compare_digest(
                 hashlib.sha256(token.encode("ascii")).digest(), self._session_hash,
             )
+
+    def status(self) -> PairingStatus:
+        """Return local UI state without disclosing the code or session token."""
+        with self._lock:
+            now = self._clock()
+            remaining = 0
+            if self._code_hash is not None and self._attempts > 0:
+                remaining = max(0, math.ceil(self._code_deadline - now))
+            return PairingStatus(
+                code_seconds=remaining,
+                session_active=self._session_hash is not None and now < self._session_deadline,
+            )
+
+    def cancel_pairing(self) -> None:
+        """Cancel a pending PC code while keeping the authorized phone."""
+        with self._lock:
+            self._code_hash = None
+            self._attempts = 0
 
     def revoke(self) -> None:
         """Disconnect the paired phone and cancel any pending pairing code."""

@@ -200,7 +200,7 @@ class MessageCardDelegate(QStyledItemDelegate):
         if key is not None and self._height_cache.get(key) != actual_height:
             self._height_cache[key] = actual_height
             persistent = QPersistentModelIndex(index)
-            QTimer.singleShot(0, lambda: self._emit_size_hint_changed(persistent))
+            QTimer.singleShot(0, self, lambda: self._emit_size_hint_changed(persistent))
 
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> QSize:  # noqa: N802
         view = self.parent()
@@ -355,7 +355,7 @@ class MessageCardDelegate(QStyledItemDelegate):
         if self._asset_refresh_pending:
             return
         self._asset_refresh_pending = True
-        QTimer.singleShot(0, self._flush_asset_refresh)
+        QTimer.singleShot(0, self, self._flush_asset_refresh)
 
     def _flush_asset_refresh(self) -> None:
         self._asset_refresh_pending = False
@@ -391,7 +391,7 @@ class VirtualMessageListView(QListView):
         # per-message trim after max_messages) do NOT need to clear the cache;
         # a surviving message's height never depends on its position.
         model.modelReset.connect(self._model_reset)
-        QTimer.singleShot(0, self.schedule_editor_refresh)
+        QTimer.singleShot(0, self, self.schedule_editor_refresh)
 
     @property
     def active_editor_count(self) -> int:
@@ -401,7 +401,7 @@ class VirtualMessageListView(QListView):
         if self._refresh_pending:
             return
         self._refresh_pending = True
-        QTimer.singleShot(0, self._refresh_virtual_editors)
+        QTimer.singleShot(0, self, self._refresh_virtual_editors)
 
     def refresh_virtualization(self) -> None:
         self._close_all_editors()
@@ -417,7 +417,8 @@ class VirtualMessageListView(QListView):
         # bursts of notifications into a single relayout.
         if not self._relayout_pending:
             self._relayout_pending = True
-            QTimer.singleShot(0, self._relayout_items)
+            # Qt cancels queued work when this view is destroyed.
+            QTimer.singleShot(0, self, self._relayout_items)
 
     def _invalidate_heights(self, *_args) -> None:
         delegate = self.itemDelegate()
