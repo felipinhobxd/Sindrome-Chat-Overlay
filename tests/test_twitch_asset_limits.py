@@ -3,6 +3,8 @@ from __future__ import annotations
 import unittest
 from types import SimpleNamespace
 
+from PySide6.QtCore import QByteArray
+
 from sindrome_overlay.ui.twitch_assets import (
     TwitchAssetCache,
     _MAX_IMAGE_BYTES,
@@ -19,11 +21,11 @@ class FakeReply:
     def bytesAvailable(self) -> int:
         return len(self.pending)
 
-    def read(self, amount: int) -> bytes:
+    def read(self, amount: int) -> QByteArray:
         chunk = bytes(self.pending[:amount])
         del self.pending[:amount]
         self.bytes_read += len(chunk)
-        return chunk
+        return QByteArray(chunk)
 
     def abort(self) -> None:
         self.aborted = True
