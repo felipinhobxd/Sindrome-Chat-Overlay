@@ -240,6 +240,28 @@ class ObsSourceServerTests(unittest.TestCase):
         self.server.remove_message("same-message", "youtube")
         self.assertEqual(self.server.snapshot()["messages"], [])
 
+    def test_youtube_author_moderation_preserves_twitch_messages(self) -> None:
+        self.server.publish_message(
+            ChatMessage("twitch", "Twitch viewer", "untouched",
+                        author_id="UC-overlap", message_id="same-message")
+        )
+        self.server.publish_message(
+            ChatMessage("youtube", "Removed viewer", "removed",
+                        author_id="UC-overlap", message_id="same-message")
+        )
+        self.server.publish_message(
+            ChatMessage("youtube", "Other viewer", "untouched",
+                        author_id="UC-other", message_id="other-message")
+        )
+        self.server.remove_by_author("UC-overlap", "youtube")
+        self.assertEqual(
+            [(item["platform"], item["author_id"]) for item in self.server.snapshot()["messages"]],
+            [("twitch", "UC-overlap"), ("youtube", "UC-other")],
+        )
+        # An empty author ID from a malformed upstream action must never clear the feed.
+        self.server.remove_by_author("", "youtube")
+        self.assertEqual(len(self.server.snapshot()["messages"]), 2)
+
     def test_config_update_does_not_expire_messages_by_time(self) -> None:
         self.server.publish_message(
             ChatMessage("twitch", "one", "persistent", message_id="persistent")
