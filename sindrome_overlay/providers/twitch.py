@@ -266,19 +266,30 @@ class TwitchProvider(BaseProvider):
             ("irc.chat.twitch.tv", 6697),
             timeout=15,
         )
-        context = ssl.create_default_context()
-        sock = context.wrap_socket(raw_socket, server_hostname="irc.chat.twitch.tv")
-        sock.settimeout(1.0)
-        self._socket = sock
+        sock: ssl.SSLSocket | None = None
+        try:
+            context = ssl.create_default_context()
+            sock = context.wrap_socket(raw_socket, server_hostname="irc.chat.twitch.tv")
+            sock.settimeout(1.0)
+            self._socket = sock
 
-        nick = f"justinfan{random.randint(10000, 99999)}"
-        self._send("CAP REQ :twitch.tv/tags twitch.tv/commands")
-        self._send("PASS SCHMOOPIIE")
-        self._send(f"NICK {nick}")
-        self._send(f"JOIN #{self.channel}")
+            nick = f"justinfan{random.randint(10000, 99999)}"
+            self._send("CAP REQ :twitch.tv/tags twitch.tv/commands")
+            self._send("PASS SCHMOOPIIE")
+            self._send(f"NICK {nick}")
+            self._send(f"JOIN #{self.channel}")
 
-        buffer = ""
-        announced = False
+            buffer = ""
+            announced = False
+        except BaseException:
+            # TLS handshake / greeting failure happens before the read loop;
+            # close both wrappers and the underlying socket in that case.
+            self._socket = None
+            if sock is not None:
+                sock.close()
+            raw_socket.close()
+            raise
+        assert sock is not None
         try:
             while not self.stop_event.is_set():
                 try:
@@ -292,6 +303,16 @@ class TwitchProvider(BaseProvider):
                 buffer = lines.pop()
                 for line in lines:
                     kind, payload = parse_twitch_line(line, self.language)
+                    # IRC 001 can precede ROOMSTATE or PRIVMSG. Wait until
+                    # the channel room ID is known before loading catalogs.
+                    if (
+                        self._third_party is not None
+                        and self._emote_loader_thread is None
+                        and line.startswith("@")
+                    ):
+                        room_id = parse_irc_tags(line[1:].partition(" ")[0]).get("room-id", "")
+                        if room_id.isdigit():
+                            self._ensure_third_party_emotes(room_id)
                     if kind == "ping":
                         self._send(f"PONG {payload}")
                     elif kind == "message" and isinstance(payload, ChatMessage):
@@ -307,12 +328,12 @@ class TwitchProvider(BaseProvider):
                         self.emit_delete_author(payload)
                     elif kind == "clear":
                         self.emit_clear()
-                    elif kind == "ready" and not announced:
-                        self.emit_status("connected", tr(self.language, "connected"))
-                        announced = True
-                        self._ensure_third_party_emotes(
-                            payload if isinstance(payload, str) else ""
-                        )
+                    elif kind == "ready":
+                        if not announced:
+                            self.emit_status("connected", tr(self.language, "connected"))
+                            announced = True
+                        if isinstance(payload, str) and payload.isdigit():
+                            self._ensure_third_party_emotes(payload)
                     elif kind == "notice" and isinstance(payload, str):
                         if "authentication failed" in payload.lower():
                             raise PermissionError(payload)
@@ -328,10 +349,13 @@ class TwitchProvider(BaseProvider):
 
     def _ensure_third_party_emotes(self, room_id: str) -> None:
         """Loads BTTV/7TV/FFZ catalogs once, in the background."""
-        if self._third_party is None or self._emote_loader_thread is not None:
+        if (
+            self._third_party is None
+            or self._emote_loader_thread is not None
+            or not room_id.isdigit()
+        ):
             return
-        if room_id:
-            self._room_id = room_id
+        self._room_id = room_id
         self._emote_loader_thread = threading.Thread(
             target=self._third_party.load,
             args=(self._room_id,),
