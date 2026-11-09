@@ -36,7 +36,6 @@ public final class TwitchProvider extends ChatProvider {
     private final String channel;
     private final ThirdPartyEmotes thirdPartyEmotes;
     private final NetClient catalogClient = new NetClient();
-    private volatile String roomId = "";
     private volatile SSLSocket socket;
     private volatile BufferedWriter writer;
 
@@ -72,27 +71,31 @@ public final class TwitchProvider extends ChatProvider {
         callback.onStatus("twitch", "connecting", YouTubeMode.STOPPED);
         SSLSocket current = (SSLSocket) SSLSocketFactory.getDefault()
                 .createSocket("irc.chat.twitch.tv", 6697);
-        current.setSoTimeout(1000);
-        // SSLSocket does not verify the peer hostname by default (unlike
-        // HttpsURLConnection). Without this, a MITM with a valid certificate
-        // issued for any other domain would be accepted.
-        SSLParameters sslParameters = current.getSSLParameters();
-        sslParameters.setEndpointIdentificationAlgorithm("HTTPS");
-        current.setSSLParameters(sslParameters);
-        current.startHandshake();
+        // Register the socket before TLS negotiation so stop() and finally
+        // can close it even when handshake or stream setup throws.
         socket = current;
-        writer = new BufferedWriter(new OutputStreamWriter(current.getOutputStream(),
-                StandardCharsets.UTF_8));
-        BufferedReader reader = new BufferedReader(new InputStreamReader(current.getInputStream(),
-                StandardCharsets.UTF_8));
-        send("CAP REQ :twitch.tv/tags twitch.tv/commands");
-        send("PASS SCHMOOPIIE");
-        send("NICK justinfan" + (10_000 + new Random().nextInt(90_000)));
-        send("JOIN #" + channel);
-        boolean announced = false;
-        long lastInbound = monotonicMs();
-        long heartbeatSent = 0L;
         try {
+            current.setSoTimeout(1000);
+            // SSLSocket does not verify the peer hostname by default (unlike
+            // HttpsURLConnection). Without this, a MITM with a valid certificate
+            // issued for any other domain would be accepted.
+            SSLParameters sslParameters = current.getSSLParameters();
+            sslParameters.setEndpointIdentificationAlgorithm("HTTPS");
+            current.setSSLParameters(sslParameters);
+            current.startHandshake();
+            writer = new BufferedWriter(new OutputStreamWriter(current.getOutputStream(),
+                    StandardCharsets.UTF_8));
+            BufferedReader reader = new BufferedReader(new InputStreamReader(current.getInputStream(),
+                    StandardCharsets.UTF_8));
+            send("CAP REQ :twitch.tv/tags twitch.tv/commands");
+            send("PASS SCHMOOPIIE");
+            send("NICK justinfan" + (10_000 + new Random().nextInt(90_000)));
+            send("JOIN #" + channel);
+            boolean announced = false;
+            boolean emotesRequested = false;
+            String roomId = "";
+            long lastInbound = monotonicMs();
+            long heartbeatSent = 0L;
             while (!stopped.get()) {
                 String line;
                 try {
@@ -117,14 +120,19 @@ public final class TwitchProvider extends ChatProvider {
                 if (parsed.clear) callback.onClear("twitch");
                 if (!parsed.deleteId.isEmpty()) callback.onDelete("twitch", parsed.deleteId);
                 if (!parsed.deleteUserId.isEmpty()) callback.onDeleteUser("twitch", parsed.deleteUserId);
-                if (!parsed.roomId.isEmpty() && !roomId.equals(parsed.roomId)) roomId = parsed.roomId;
+                if (!parsed.roomId.isEmpty()) roomId = parsed.roomId;
+                // Connection announcements may precede ROOMSTATE (and messages).
+                // Start the catalog as soon as the channel room ID is known,
+                // independently of whether the "connected" status was sent.
+                if (thirdPartyEmotes != null && shouldLoadThirdPartyEmotes(
+                        emotesRequested, roomId)) {
+                    thirdPartyEmotes.loadOnce(roomId, catalogClient);
+                    emotesRequested = true;
+                }
                 if (parsed.message != null) {
                     if (!announced) {
                         callback.onStatus("twitch", "connected", YouTubeMode.STOPPED);
                         announced = true;
-                        if (thirdPartyEmotes != null) {
-                            thirdPartyEmotes.loadOnce(roomId, catalogClient);
-                        }
                     }
                     callback.onMessage(thirdPartyEmotes == null
                             ? parsed.message : thirdPartyEmotes.augment(parsed.message));
@@ -137,6 +145,12 @@ public final class TwitchProvider extends ChatProvider {
         } finally {
             closeSocket();
         }
+    }
+
+    static boolean shouldLoadThirdPartyEmotes(boolean requested, String channelId) {
+        // Waiting for the room ID avoids loading global emotes only and
+        // permanently missing the channel-specific catalog.
+        return !requested && channelId != null && !channelId.isEmpty();
     }
 
     static int heartbeatAction(long now, long lastInbound, long heartbeatSent) {

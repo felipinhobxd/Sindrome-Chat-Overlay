@@ -43,6 +43,7 @@ from ..i18n import tr
 from ..models import ChatMessage
 from ..providers import TwitchProvider, YouTubeProvider
 from ..providers.base import BaseProvider
+from ..provider_event_queue import ProviderEventQueue
 from ..settings import Settings, SettingsStore
 from ..sounds import NotificationSoundPlayer
 from ..updates import (
@@ -114,7 +115,7 @@ class OverlayShell(QMainWindow):
             fallback_beep=QApplication.beep,
         )
         self.twitch_assets = TwitchAssetCache(logger, self)
-        self.events: queue.Queue[ProviderEvent] = queue.Queue()
+        self.events: queue.Queue[ProviderEvent] = ProviderEventQueue()
         self.providers: list[BaseProvider] = []
         self.messages: list[ChatMessage] = []
         self._created_monotonic: list[float] = []
@@ -674,7 +675,7 @@ class OverlayShell(QMainWindow):
     def _restart_providers(self) -> None:
         self._stop_providers()
         # Old workers keep their old queue, so late shutdown events cannot overwrite new status.
-        self.events = queue.Queue()
+        self.events = ProviderEventQueue()
 
         if self.settings.twitch_enabled:
             provider: TwitchProvider | YouTubeProvider = TwitchProvider(
@@ -711,6 +712,10 @@ class OverlayShell(QMainWindow):
         self.providers.clear()
         for provider in old_providers:
             provider.stop()
+        # A control-only backlog can block producers waiting for space.
+        # Release them before abandoning this queue during restart/shutdown.
+        if isinstance(self.events, ProviderEventQueue):
+            self.events.close()
         if old_providers:
             # join() can block for seconds on a provider stuck in a network
             # read; reap them on a daemon thread instead of freezing the UI.
@@ -926,7 +931,7 @@ class OverlayShell(QMainWindow):
         updated.window_height = self.settings.window_height
         self.settings = updated
         try:
-            self.store.save(self.settings)
+            self.store.save(self._settings_for_save())
         except (OSError, ValueError) as exc:
             self.log.warning("Unable to save settings: %s", exc)
         self.notification_sounds.reset_limit()
@@ -941,6 +946,9 @@ class OverlayShell(QMainWindow):
         self._restart_providers()
         self.set_click_through(self.settings.click_through)
         self._settings_applied()
+
+    def _settings_for_save(self) -> Settings:
+        return self.settings
 
     def _settings_applied(self) -> None:
         return
@@ -988,7 +996,7 @@ class OverlayShell(QMainWindow):
         self._set_native_click_through(enabled)
         try:
             self._remember_geometry()
-            self.store.save(self.settings)
+            self.store.save(self._settings_for_save())
         except OSError as exc:
             self.log.warning("Unable to save lock state: %s", exc)
         if enabled and self.tray and self._first_lock_notice:
@@ -1050,11 +1058,11 @@ class OverlayShell(QMainWindow):
             self._fallback_shortcut.setEnabled(False)
         self._remember_geometry()
         try:
-            self.store.save(self.settings)
+            self.store.save(self._settings_for_save())
         except OSError as exc:
             self.log.warning("Unable to save settings on close: %s", exc)
         self._stop_providers()
-        self.events = queue.Queue()
+        self.events = ProviderEventQueue()
         if self.tray:
             self.tray.hide()
         event.accept()
