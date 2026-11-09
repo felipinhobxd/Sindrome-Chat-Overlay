@@ -39,7 +39,10 @@ jobs:
           java-version: "17"
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          # The legacy SDK 'tools' package was removed from Google's repository.
+          packages: platform-tools
 
       - name: Install Android SDK packages
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
@@ -151,11 +154,17 @@ jobs:
             SHA256SUMS-Android.txt
 
   instrumented-tests:
+    # Do not run default-branch emulator tests for unrelated workflow_run events.
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           persist-credentials: false
 
       - name: Set up Java
@@ -165,7 +174,10 @@ jobs:
           java-version: "17"
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          # The legacy SDK 'tools' package was removed from Google's repository.
+          packages: 'platform-tools emulator'
 
       - name: Install Android SDK packages
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
@@ -213,10 +225,12 @@ jobs:
           if-no-files-found: ignore
 
   publish-android:
-    needs: build-android
+    # Never publish an APK unless both local and emulator test gates passed.
+    needs: [build-android, instrumented-tests]
     if: >-
       github.event_name != 'pull_request' &&
       needs.build-android.result == 'success' &&
+      needs.instrumented-tests.result == 'success' &&
       needs.build-android.outputs.publish == 'true' &&
       needs.build-android.outputs.signing_configured == 'true'
     runs-on: ubuntu-latest
