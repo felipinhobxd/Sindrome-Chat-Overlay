@@ -195,27 +195,43 @@ class ObsChatSourceServer:
         payload = message_payload(message, badge_images)
         with self._lock:
             message_id = str(payload.get("message_id") or "")
-            if message_id and any(item.get("message_id") == message_id for item in self._messages):
+            if message_id and any(
+                item.get("message_id") == message_id
+                and item.get("platform") == payload.get("platform")
+                for item in self._messages
+            ):
                 return
             self._messages.append(payload)
             self._revision += 1
 
-    def remove_message(self, message_id: str) -> None:
+    def remove_message(self, message_id: str, platform: str = "") -> None:
         if not message_id:
             return
         with self._lock:
-            retained = [item for item in self._messages if item.get("message_id") != message_id]
+            retained = [
+                item for item in self._messages
+                if not (
+                    item.get("message_id") == message_id
+                    and (not platform or item.get("platform") == platform)
+                )
+            ]
             if len(retained) == len(self._messages):
                 return
             self._messages = deque(retained, maxlen=self._config.max_messages)
             self._revision += 1
 
-    def remove_by_author(self, author_id: str) -> None:
-        """Drops the banned account's history from the browser source."""
+    def remove_by_author(self, author_id: str, platform: str = "") -> None:
+        """Remove the banned account's messages without affecting other platforms."""
         if not author_id:
             return
         with self._lock:
-            retained = [item for item in self._messages if item.get("author_id") != author_id]
+            retained = [
+                item for item in self._messages
+                if not (
+                    item.get("author_id") == author_id
+                    and (not platform or item.get("platform") == platform)
+                )
+            ]
             if len(retained) == len(self._messages):
                 return
             self._messages = deque(retained, maxlen=self._config.max_messages)
