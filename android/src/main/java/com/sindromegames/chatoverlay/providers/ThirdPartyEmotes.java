@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -30,22 +31,55 @@ public final class ThirdPartyEmotes {
     private static final int MAX_CODE_LENGTH = 40;
     private static final int MAX_MATCHES_PER_MESSAGE = 30;
 
-    private volatile Map<String, String> codes = new LinkedHashMap<>();
-    private final AtomicBoolean started = new AtomicBoolean(false);
+    @FunctionalInterface
+    interface CatalogFetcher {
+        Map<String, String> fetch(String channelId, NetClient net);
+    }
 
-    /** Fetches the catalogs on a background thread; only the first call runs. */
-    public void loadOnce(final String channelId, final NetClient net) {
-        if (!started.compareAndSet(false, true)) return;
-        final Thread loader = new Thread(() -> {
+    private volatile Map<String, String> codes = new LinkedHashMap<>();
+    private final AtomicBoolean loading = new AtomicBoolean(false);
+    private final CatalogFetcher fetcher;
+
+    public ThirdPartyEmotes() {
+        this((channelId, net) -> {
             Map<String, String> loaded = new LinkedHashMap<>();
             fetchAll(channelId, net, loaded);
-            if (!loaded.isEmpty()) {
-                Log.i(TAG, "Loaded " + loaded.size() + " third-party emotes");
+            return loaded;
+        });
+    }
+
+    /** Injected fetcher keeps reconnect tests independent of the public emote APIs. */
+    ThirdPartyEmotes(CatalogFetcher fetcher) {
+        this.fetcher = Objects.requireNonNull(fetcher);
+    }
+
+    /**
+     * Refresh once per Twitch IRC connection, not once per provider lifetime.
+     * In-flight fetches are deduplicated; an empty/failed refresh never erases
+     * the previous good catalog, and a later reconnect can retry.
+     *
+     * The returned thread is useful for deterministic tests; production does
+     * not wait for downloads on the IRC reader thread.
+     */
+    @Nullable Thread refreshForConnection(final String channelId, final NetClient net) {
+        if (channelId == null || !channelId.matches("[0-9]+")) return null;
+        if (!loading.compareAndSet(false, true)) return null;
+        final Thread loader = new Thread(() -> {
+            try {
+                Map<String, String> loaded = fetcher.fetch(channelId, net);
+                if (loaded != null && !loaded.isEmpty()) {
+                    codes = new LinkedHashMap<>(loaded);
+                    Log.i(TAG, "Loaded " + loaded.size() + " third-party emotes");
+                }
+            } catch (RuntimeException failure) {
+                Log.w(TAG, "Unable to refresh third-party emote catalog", failure);
+            } finally {
+                loading.set(false);
             }
-            codes = loaded;
         }, "twitch-third-party-emotes");
         loader.setDaemon(true);
         loader.start();
+        return loader;
     }
 
     private static void fetchAll(String channelId, NetClient net, Map<String, String> output) {
