@@ -43,6 +43,7 @@ stream_list_pb2 = _LazyModule("sindrome_overlay.youtube_grpc.stream_list_pb2")
 stream_list_pb2_grpc = _LazyModule("sindrome_overlay.youtube_grpc.stream_list_pb2_grpc")
 
 _VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
+_MAX_CHAT_POLL_INTERVAL_MS = 300_000  # Never sleep for hours on remote timing metadata.
 _VIDEO_ID_IN_HTML = re.compile(r'(?:"videoId"\s*:\s*"|watch\?v=|youtu\.be/)([A-Za-z0-9_-]{11})')
 _BROWSER_HEADERS = {
     "User-Agent": (
@@ -163,7 +164,8 @@ def find_continuation(node: Any) -> tuple[str, int]:
                 timeout_ms = int(value.get("timeoutMs", 2_000))
                 if timeout_ms < 0:
                     timeout_ms = 2_000
-            except (TypeError, ValueError):
+                timeout_ms = min(timeout_ms, _MAX_CHAT_POLL_INTERVAL_MS)
+            except (TypeError, ValueError, OverflowError):
                 timeout_ms = 2_000
             return str(value["continuation"]), timeout_ms
     return "", 2_000
@@ -973,8 +975,8 @@ class YouTubeProvider(BaseProvider):
                 raise ChatUnavailable("The official live chat was closed.")
             try:
                 interval_ms = int(payload.get("pollingIntervalMillis") or 5_000)
-                interval = interval_ms / 1000 if interval_ms > 0 else 5.0
-            except (TypeError, ValueError):
+                interval = min(interval_ms, _MAX_CHAT_POLL_INTERVAL_MS) / 1000 if interval_ms > 0 else 5.0
+            except (TypeError, ValueError, OverflowError):
                 interval = 5.0
             if self.wait(interval):
                 return
