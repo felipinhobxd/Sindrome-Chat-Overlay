@@ -193,7 +193,7 @@ class TwitchAssetCache(QObject):
             self._oversized_replies.add(reply)
             reply.abort()
         elif available > 0:
-            buffer.extend(bytes(reply.read(available)))
+            buffer.extend(bytes(reply.read(available).data()))
 
     def _download_finished(self, reply: QNetworkReply) -> None:
         try:
