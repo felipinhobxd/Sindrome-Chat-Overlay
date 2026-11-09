@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import unittest
+
+import requests
 from unittest.mock import patch
 
 from sindrome_overlay.models import ChatEmote, ChatMessage
@@ -139,6 +141,70 @@ class ResolverTests(unittest.TestCase):
         self.assertIn("FromFfz", codes)
         for url in codes.values():
             self.assertTrue(url.startswith("https://"))
+
+    def test_catalog_timeout_does_not_block_other_providers(self) -> None:
+        resolver = ThirdPartyEmoteResolver()
+
+        def fake_fetch(url: str):
+            if "betterttv.net" in url:
+                raise requests.Timeout("BTTV is temporarily unavailable")
+            if "7tv.io" in url:
+                return {"emotes": [{"name": "Healthy7TV", "id": "ok-7"}]}
+            if "frankerfacez.com" in url:
+                return {
+                    "default_sets": [1],
+                    "sets": {"1": {"emoticons": [
+                        {"name": "HealthyFFZ", "urls": {"2": "//cdn.frankerfacez.com/ok"}}
+                    ]}},
+                }
+            return None
+
+        with patch("sindrome_overlay.providers.third_party_emotes._fetch_json", side_effect=fake_fetch):
+            resolver.load("123")
+        self.assertNotIn("MissingBttv", resolver._codes)
+        self.assertIn("Healthy7TV", resolver._codes)
+        self.assertIn("HealthyFFZ", resolver._codes)
+
+    def test_all_failed_catalogs_preserve_last_known_good_emotes(self) -> None:
+        resolver = ThirdPartyEmoteResolver()
+        existing = {"StillVisible": "https://cdn.betterttv.net/emote/old/2x"}
+        resolver._codes = dict(existing)
+        with patch(
+            "sindrome_overlay.providers.third_party_emotes._fetch_json",
+            side_effect=requests.ConnectionError("network unavailable"),
+        ):
+            resolver.load("123")
+        self.assertEqual(resolver._codes, existing)
+
+    def test_malformed_catalog_does_not_stop_other_providers(self) -> None:
+        resolver = ThirdPartyEmoteResolver()
+
+        def fake_fetch(url: str):
+            if "betterttv.net" in url:
+                return [{"id": "valid", "code": "ValidBttv"}]
+            if "frankerfacez.com" in url:
+                return {"default_sets": 5, "sets": {}}
+            return None
+
+        with patch("sindrome_overlay.providers.third_party_emotes._fetch_json", side_effect=fake_fetch):
+            resolver.load("123")
+        self.assertIn("ValidBttv", resolver._codes)
+
+    def test_stop_during_load_cannot_replace_existing_catalog(self) -> None:
+        resolver = ThirdPartyEmoteResolver()
+        existing = {"Previous": "https://cdn.betterttv.net/emote/previous/2x"}
+        resolver._codes = dict(existing)
+
+        def stop_during_fetch(_url: str):
+            resolver.stop()
+            return [{"id": "new", "code": "ShouldNotPublish"}]
+
+        with patch(
+            "sindrome_overlay.providers.third_party_emotes._fetch_json",
+            side_effect=stop_during_fetch,
+        ):
+            resolver.load("123")
+        self.assertEqual(resolver._codes, existing)
 
 
 if __name__ == "__main__":

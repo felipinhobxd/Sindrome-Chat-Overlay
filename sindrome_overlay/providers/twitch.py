@@ -222,6 +222,10 @@ class TwitchProvider(BaseProvider):
         self._socket: ssl.SSLSocket | None = None
         self._room_id = ""
         self._emote_loader_thread: threading.Thread | None = None
+        self._emote_loader_lock = threading.Lock()
+        self._emote_loader_active = False
+        self._pending_emote_room_id: str | None = None
+        self._emote_refresh_started_for_session = False
         self._third_party: ThirdPartyEmoteResolver | None = (
             ThirdPartyEmoteResolver() if third_party_emotes else None
         )
@@ -261,6 +265,10 @@ class TwitchProvider(BaseProvider):
         self.emit_status("stopped", tr(self.language, "disconnected"))
 
     def _listen(self) -> None:
+        # Each successful IRC session is entitled to a fresh emote catalog.
+        # An earlier session's download may still be running; the worker below
+        # serializes refreshes rather than spawning concurrent network threads.
+        self._emote_refresh_started_for_session = False
         self.emit_status("connecting", tr(self.language, "connecting"))
         raw_socket = socket.create_connection(
             ("irc.chat.twitch.tv", 6697),
@@ -308,7 +316,7 @@ class TwitchProvider(BaseProvider):
                     if (
                         kind == "message"
                         and self._third_party is not None
-                        and self._emote_loader_thread is None
+                        and not self._emote_refresh_started_for_session
                         and line.startswith("@")
                     ):
                         room_id = parse_irc_tags(line[1:].partition(" ")[0]).get("room-id", "")
@@ -349,21 +357,43 @@ class TwitchProvider(BaseProvider):
                 pass
 
     def _ensure_third_party_emotes(self, room_id: str) -> None:
-        """Loads BTTV/7TV/FFZ catalogs once, in the background."""
+        """Schedule one refresh per IRC session without overlapping downloads."""
         if (
             self._third_party is None
-            or self._emote_loader_thread is not None
+            or self._emote_refresh_started_for_session
             or not room_id.isdigit()
+            or self.stop_event.is_set()
         ):
             return
+        self._emote_refresh_started_for_session = True
         self._room_id = room_id
-        self._emote_loader_thread = threading.Thread(
-            target=self._third_party.load,
-            args=(self._room_id,),
-            name="twitch-third-party-emotes",
-            daemon=True,
-        )
-        self._emote_loader_thread.start()
+        with self._emote_loader_lock:
+            # A reconnect during an ongoing refresh queues another attempt.
+            # Keep only the latest request to bound work on a flapping network.
+            self._pending_emote_room_id = room_id
+            if self._emote_loader_active:
+                return
+            self._emote_loader_active = True
+            self._emote_loader_thread = threading.Thread(
+                target=self._load_emotes_in_background,
+                name="twitch-third-party-emotes",
+                daemon=True,
+            )
+            self._emote_loader_thread.start()
+
+    def _load_emotes_in_background(self) -> None:
+        assert self._third_party is not None
+        while True:
+            with self._emote_loader_lock:
+                room_id = self._pending_emote_room_id
+                self._pending_emote_room_id = None
+                if room_id is None or self.stop_event.is_set():
+                    self._emote_loader_active = False
+                    return
+            try:
+                self._third_party.load(room_id)
+            except Exception as exc:  # noqa: BLE001 - isolate provider network workers
+                self.log.warning("Twitch emote refresh failed: %s", exc)
 
     def _send(self, line: str) -> None:
         if self._socket is None:
