@@ -45,12 +45,12 @@ jobs:
           packages: platform-tools
 
       - name: Install Android SDK packages
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+        run: sdkmanager --channel=3 "platforms;android-35" "platforms;android-37.0" "build-tools;36.0.0"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
         with:
-          gradle-version: "8.10.2"
+          gradle-version: "9.6.0"
           cache-provider: basic
 
       - name: Read application version
@@ -72,6 +72,12 @@ jobs:
 
       - name: Build installable debug APK
         run: gradle :android:assembleDebug --stacktrace
+
+      # Catch R8/minification or resource-shrinking regressions before a PR merge.
+      # Pull requests do not receive signing credentials, so this is unsigned.
+      - name: Build unsigned minified release APK on pull requests
+        if: github.event_name == 'pull_request'
+        run: gradle :android:assembleRelease --stacktrace
 
       # Keep the release gate independent of other parallel workflows:
       # a vulnerable transitive Android runtime dependency blocks signing.
@@ -153,7 +159,7 @@ jobs:
           source_apk="android/build/outputs/apk/release/android-release.apk"
           release_apk="SindromeChatOverlay-Android-v$VERSION.apk"
           test -f "$source_apk"
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$source_apk"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$source_apk"
           cp "$source_apk" "$release_apk"
           sha256sum "$release_apk" > SHA256SUMS-Android.txt
 
@@ -193,12 +199,12 @@ jobs:
           packages: 'platform-tools emulator'
 
       - name: Install Android SDK packages
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+        run: sdkmanager --channel=3 "platforms;android-35" "platforms;android-37.0" "build-tools;36.0.0"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
         with:
-          gradle-version: "8.10.2"
+          gradle-version: "9.6.0"
           cache-provider: basic
 
       - name: Enable KVM group perms
