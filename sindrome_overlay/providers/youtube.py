@@ -213,8 +213,16 @@ def extract_video_id_from_url(value: str) -> str:
 
 
 def youtube_messages_from_actions(
-    actions: Iterable[Any], language: str = "en"
+    actions: Iterable[Any],
+    language: str = "en",
+    *,
+    deleted_author_ids: list[str] | None = None,
 ) -> tuple[list[ChatMessage], list[str]]:
+    """Parse Innertube actions, collecting optional author-wide moderation events.
+
+    Keep the historical (messages, message_ids) return value so existing
+    consumers and parser tests remain compatible.
+    """
     messages: list[ChatMessage] = []
     deletions: list[str] = []
 
@@ -224,7 +232,9 @@ def youtube_messages_from_actions(
         replay = raw_action.get("replayChatItemAction")
         if isinstance(replay, dict):
             nested_messages, nested_deletions = youtube_messages_from_actions(
-                replay.get("actions") or [], language
+                replay.get("actions") or [],
+                language,
+                deleted_author_ids=deleted_author_ids,
             )
             messages.extend(nested_messages)
             deletions.extend(nested_deletions)
@@ -234,6 +244,15 @@ def youtube_messages_from_actions(
             delete_action = raw_action.get(delete_key)
             if isinstance(delete_action, dict) and delete_action.get("targetItemId"):
                 deletions.append(str(delete_action["targetItemId"]))
+
+        # YouTube can delete every chat item posted by one channel after a
+        # timeout/ban. The payload identifies that channel by its stable ID.
+        # Never fall back to a display name or clear the entire feed.
+        author_action = raw_action.get("markChatItemsByAuthorAsDeletedAction")
+        if isinstance(author_action, dict) and deleted_author_ids is not None:
+            author_id = author_action.get("externalChannelId")
+            if isinstance(author_id, str) and author_id.strip():
+                deleted_author_ids.append(author_id.strip())
 
         add_action = raw_action.get("addChatItemAction")
         if not isinstance(add_action, dict):
@@ -709,13 +728,18 @@ class YouTubeProvider(BaseProvider):
             if not isinstance(live, dict):
                 raise LiveChatEnded("The live stream ended or chat was disabled.")
 
+            deleted_author_ids: list[str] = []
             messages, deletions = youtube_messages_from_actions(
-                live.get("actions") or [], self.language
+                live.get("actions") or [],
+                self.language,
+                deleted_author_ids=deleted_author_ids,
             )
             for message in messages:
                 self._emit_once(message)
             for message_id in deletions:
                 self.emit_delete(message_id)
+            for author_id in deleted_author_ids:
+                self.emit_delete_author(author_id)
 
             next_continuation, timeout_ms = find_continuation(live.get("continuations") or [])
             if not next_continuation:
