@@ -27,6 +27,8 @@ _MAX_ACTIVE_DOWNLOADS = 6
 _MAX_QUEUED_DOWNLOADS = 128
 _MAX_MEMORY_IMAGES = 48
 _MAX_RETRY_ENTRIES = 256
+_MAX_IMAGE_BYTES = 2_000_000
+_MAX_MANIFEST_BYTES = 5_000_000
 
 
 class TwitchAssetCache(QObject):
@@ -46,6 +48,10 @@ class TwitchAssetCache(QObject):
         self._manifest_loaded: set[str] = set()
         self._manifest_retry_after: dict[str, float] = {}
         self._writes_since_prune = 0
+        # Qt replies are read incrementally; never collect whole remote bodies.
+        self._reply_buffers: dict[QNetworkReply, bytearray] = {}
+        self._reply_limits: dict[QNetworkReply, int] = {}
+        self._oversized_replies: set[QNetworkReply] = set()
         self._network = QNetworkAccessManager(self)
         self._network.finished.connect(self._download_finished)
         try:
@@ -151,6 +157,7 @@ class TwitchAssetCache(QObject):
         reply.setProperty("asset_type", asset_type)
         reply.setProperty("signal_key", signal_key)
         reply.setProperty("cache_path", str(path))
+        self._track_reply(reply, _MAX_IMAGE_BYTES)
 
     def _request_badge_manifest(self, scope: str) -> None:
         if scope in self._manifest_loaded or scope in self._manifest_pending:
@@ -164,9 +171,34 @@ class TwitchAssetCache(QObject):
         reply = self._network.get(self._request(url))
         reply.setProperty("download_kind", "badge_manifest")
         reply.setProperty("manifest_scope", scope)
+        self._track_reply(reply, _MAX_MANIFEST_BYTES)
+
+    def _track_reply(self, reply: QNetworkReply, limit: int) -> None:
+        self._reply_buffers[reply] = bytearray()
+        self._reply_limits[reply] = limit
+        # Also limit the bytes queued inside Qt between readyRead callbacks.
+        reply.setReadBufferSize(limit + 1)
+        reply.readyRead.connect(lambda: self._consume_reply_data(reply))
+
+    def _consume_reply_data(self, reply: QNetworkReply) -> None:
+        if reply in self._oversized_replies:
+            return
+        buffer = self._reply_buffers.get(reply)
+        if buffer is None:
+            return
+        available = int(reply.bytesAvailable())
+        remaining = self._reply_limits[reply] - len(buffer)
+        if available > remaining:
+            # Abort before reading/allocating a hostile oversized payload.
+            self._oversized_replies.add(reply)
+            reply.abort()
+        elif available > 0:
+            buffer.extend(bytes(reply.read(available).data()))
 
     def _download_finished(self, reply: QNetworkReply) -> None:
         try:
+            # The final bytes may arrive before Qt emits finished.
+            self._consume_reply_data(reply)
             kind = str(reply.property("download_kind") or "")
             if kind == "image":
                 self._image_download_finished(reply)
@@ -175,6 +207,9 @@ class TwitchAssetCache(QObject):
         except Exception as exc:  # noqa: BLE001 - Qt network callback boundary
             self.log.debug("Unable to process a chat asset response: %s", exc)
         finally:
+            self._reply_buffers.pop(reply, None)
+            self._reply_limits.pop(reply, None)
+            self._oversized_replies.discard(reply)
             reply.deleteLater()
             self._start_queued_downloads()
 
@@ -183,14 +218,14 @@ class TwitchAssetCache(QObject):
         asset_type = str(reply.property("asset_type") or "")
         signal_key = str(reply.property("signal_key") or "")
         self._pending.discard(asset_key)
+        if reply in self._oversized_replies:
+            self._mark_failed(asset_key, "image exceeds the 2 MB limit")
+            return
         if not self._reply_succeeded(reply):
             self._mark_failed(asset_key, reply.errorString())
             return
 
-        data = bytes(reply.readAll().data())
-        if len(data) > 2_000_000:
-            self._mark_failed(asset_key, "image exceeds the 2 MB limit")
-            return
+        data = bytes(self._reply_buffers.get(reply, b""))
         image = QImage.fromData(data)
         if image.isNull() or image.width() > 1024 or image.height() > 1024 or image.width() * image.height() > 1_048_576:
             self._mark_failed(asset_key, "invalid or oversized image data")
@@ -223,6 +258,9 @@ class TwitchAssetCache(QObject):
     def _manifest_download_finished(self, reply: QNetworkReply) -> None:
         scope = str(reply.property("manifest_scope") or "")
         self._manifest_pending.discard(scope)
+        if reply in self._oversized_replies:
+            self._manifest_retry_after[scope] = time.monotonic() + 300
+            return
         if not self._reply_succeeded(reply):
             self._manifest_retry_after[scope] = time.monotonic() + 300
             self.log.debug(
@@ -230,10 +268,7 @@ class TwitchAssetCache(QObject):
             )
             return
 
-        data = bytes(reply.readAll().data())
-        if len(data) > 5_000_000:
-            self._manifest_retry_after[scope] = time.monotonic() + 300
-            return
+        data = bytes(self._reply_buffers.get(reply, b""))
         try:
             payload = json.loads(data.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):

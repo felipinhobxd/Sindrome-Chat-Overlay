@@ -11,7 +11,7 @@ from typing import Any
 
 from .card_themes import DEFAULT_CARD_THEME, normalize_card_theme
 from .i18n import normalize_language
-from .profiles import normalize_custom_profiles, normalize_profile_ref
+from .profiles import normalize_custom_profiles, normalize_game_profiles, normalize_profile_ref
 from .sounds import DEFAULT_TWITCH_SOUND, DEFAULT_YOUTUBE_SOUND, normalize_sound_id
 from .url_utils import normalize_twitch_channel, normalize_youtube_input
 
@@ -77,6 +77,8 @@ class Settings:
     obs_message_background_opacity: int = 72
     overlay_profiles: dict[str, dict[str, Any]] = field(default_factory=dict)
     active_overlay_profile: str = ""
+    automatic_profiles_enabled: bool = False
+    game_profiles: dict[str, str] = field(default_factory=dict)
 
     def normalized(self) -> Settings:
         self.language = normalize_language(self.language)
@@ -118,6 +120,8 @@ class Settings:
             self.active_overlay_profile,
             self.overlay_profiles,
         )
+        self.automatic_profiles_enabled = self.automatic_profiles_enabled is True
+        self.game_profiles = normalize_game_profiles(self.game_profiles, self.overlay_profiles)
         return self
 
 
@@ -131,14 +135,49 @@ class SettingsStore:
             payload = json.loads(self.path.read_text(encoding="utf-8"))
             if not isinstance(payload, dict):
                 return defaults
-            allowed = {item.name for item in fields(Settings)}
-            values = {key: value for key, value in payload.items() if key in allowed}
+            values: dict[str, Any] = {}
+            # Treat the settings file as untrusted input. A single malformed
+            # field must not crash startup or discard other valid preferences.
+            for item in fields(Settings):
+                if item.name not in payload:
+                    continue
+                raw = payload[item.name]
+                default = getattr(defaults, item.name)
+                if isinstance(default, bool):
+                    if isinstance(raw, bool):
+                        values[item.name] = raw
+                elif isinstance(default, str):
+                    if isinstance(raw, str):
+                        values[item.name] = raw
+                elif isinstance(default, int):
+                    if not isinstance(raw, bool):
+                        try:
+                            values[item.name] = int(raw)
+                        except (TypeError, ValueError, OverflowError):
+                            pass
+                elif isinstance(default, dict):
+                    # Profile normalizers already reject malformed structures.
+                    values[item.name] = raw
             encrypted_key = values.get("youtube_api_key")
             if isinstance(encrypted_key, str):
                 try:
                     values["youtube_api_key"] = _unprotect_secret(encrypted_key)
                 except OSError:
                     values["youtube_api_key"] = ""
+            # Valid strings can still contain invalid channel names or URLs.
+            # Fall back field by field instead of discarding unrelated settings.
+            language = values.get("language", defaults.language)
+            for input_field, enabled_field, normalize in (
+                ("twitch_channel", "twitch_enabled", normalize_twitch_channel),
+                ("youtube_input", "youtube_enabled", normalize_youtube_input),
+            ):
+                candidate = values.get(input_field, getattr(defaults, input_field))
+                enabled = values.get(enabled_field, getattr(defaults, enabled_field))
+                if enabled or candidate.strip():
+                    try:
+                        normalize(candidate, language)
+                    except ValueError:
+                        values.pop(input_field, None)
             return Settings(**values).normalized()
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             return defaults

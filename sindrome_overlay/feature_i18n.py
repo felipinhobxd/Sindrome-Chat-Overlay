@@ -4,6 +4,16 @@ from typing import Any
 
 _TEXT: dict[str, dict[str, str]] = {
     "en": {
+        "automatic_profiles": "Automatic profiles (Windows)",
+        "automatic_profiles_enable": "Enable automatic profiles",
+        "automatic_profiles_help": (
+            "Select a profile above, then associate the game's .exe. The layout stays during "
+            "Alt+Tab and is restored when the game closes. Choosing a manual profile pauses "
+            "automation. Settings temporarily show your original layout."
+        ),
+        "game_profile_add": "Associate game .exe…",
+        "game_profile_remove": "Remove association",
+        "game_profile_limit": "You can associate up to {count} games.",
         "profiles": "Overlay profiles",
         "profiles_menu": "Overlay profiles",
         "profiles_help": (
@@ -58,6 +68,16 @@ _TEXT: dict[str, dict[str, str]] = {
         "obs_unavailable": "OBS source is disabled. Enable it and save settings first.",
     },
     "pt-BR": {
+        "automatic_profiles": "Perfis automáticos (Windows)",
+        "automatic_profiles_enable": "Ativar perfis automáticos",
+        "automatic_profiles_help": (
+            "Selecione um perfil acima e associe o .exe do jogo. O layout permanece no Alt+Tab "
+            "e o anterior volta ao fechar o jogo. Escolher um perfil manual pausa a automação. "
+            "As configurações mostram temporariamente seu layout original."
+        ),
+        "game_profile_add": "Associar .exe do jogo…",
+        "game_profile_remove": "Remover associação",
+        "game_profile_limit": "Você pode associar até {count} jogos.",
         "profiles": "Perfis de Overlay",
         "profiles_menu": "Perfis de Overlay",
         "profiles_help": (

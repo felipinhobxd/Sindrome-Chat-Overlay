@@ -2,18 +2,23 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import replace
+import ntpath
+import sys
 
-from PySide6.QtCore import QUrl, Signal
+from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
+    QFileDialog,
     QGroupBox,
     QHBoxLayout,
     QInputDialog,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QPushButton,
     QSpinBox,
@@ -25,11 +30,15 @@ from PySide6.QtWidgets import (
 from ..feature_i18n import feature_tr
 from ..profiles import (
     MAX_CUSTOM_PROFILES,
+    MAX_GAME_PROFILES,
     capture_overlay_profile,
     iter_profile_choices,
     normalize_custom_profiles,
+    normalize_game_path,
+    normalize_game_profiles,
     normalize_profile_name,
     normalize_profile_ref,
+    profile_display_name,
     resolve_profile,
 )
 from .settings_dialog import SettingsDialog as _BaseSettingsDialog
@@ -49,6 +58,7 @@ class SettingsDialog(_BaseSettingsDialog):
             self._profiles,
         )
         self._applying_profile = False
+        self._game_profiles = normalize_game_profiles(self._current.game_profiles, self._profiles)
 
         tabs = self.findChild(QTabWidget)
         if tabs is not None:
@@ -91,12 +101,80 @@ class SettingsDialog(_BaseSettingsDialog):
         actions.addStretch(1)
         group_layout.addLayout(actions)
         layout.addWidget(group)
+        layout.addWidget(self._automatic_profiles_group())
         layout.addStretch(1)
 
         self.profile_combo.currentIndexChanged.connect(self._update_profile_buttons)
         self._reload_profile_combo(self._active_profile_ref)
         self._connect_profile_change_tracking()
         return tab
+
+    def _automatic_profiles_group(self) -> QGroupBox:
+        group = QGroupBox(self._feature_text("automatic_profiles"))
+        layout = QVBoxLayout(group)
+        help_label = QLabel(self._feature_text("automatic_profiles_help"))
+        help_label.setWordWrap(True)
+        layout.addWidget(help_label)
+        self.automatic_profiles_enabled = QCheckBox(self._feature_text("automatic_profiles_enable"))
+        self.automatic_profiles_enabled.setChecked(self._current.automatic_profiles_enabled)
+        self.automatic_profiles_enabled.setEnabled(sys.platform == "win32")
+        layout.addWidget(self.automatic_profiles_enabled)
+        self.game_profile_list = QListWidget()
+        self.game_profile_list.setObjectName("GameProfiles")
+        self.game_profile_list.setMaximumHeight(110)
+        layout.addWidget(self.game_profile_list)
+        row = QHBoxLayout()
+        self.game_profile_add = QPushButton(self._feature_text("game_profile_add"))
+        self.game_profile_add.setObjectName("ActionButton")
+        self.game_profile_add.setEnabled(sys.platform == "win32")
+        self.game_profile_add.clicked.connect(self._choose_game_profile)
+        row.addWidget(self.game_profile_add)
+        self.game_profile_remove = QPushButton(self._feature_text("game_profile_remove"))
+        self.game_profile_remove.setObjectName("ActionButton")
+        self.game_profile_remove.clicked.connect(self._remove_game_profile)
+        row.addWidget(self.game_profile_remove)
+        layout.addLayout(row)
+        self.game_profile_list.currentRowChanged.connect(
+            lambda row: self.game_profile_remove.setEnabled(row >= 0)
+        )
+        self._reload_game_profiles()
+        return group
+
+    def _reload_game_profiles(self) -> None:
+        self._game_profiles = normalize_game_profiles(self._game_profiles, self._profiles)
+        self.game_profile_list.clear()
+        for path, ref in sorted(self._game_profiles.items()):
+            label = profile_display_name(ref, self._current.language)
+            item = QListWidgetItem(f"{ntpath.basename(path)} → {label}")
+            item.setData(Qt.ItemDataRole.UserRole, path)
+            item.setToolTip(path)
+            self.game_profile_list.addItem(item)
+        self.game_profile_remove.setEnabled(False)
+
+    def _choose_game_profile(self) -> None:
+        ref = self._selected_profile_ref()
+        if not resolve_profile(ref, self._profiles):
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self, self._feature_text("game_profile_add"), "", "Windows (*.exe)"
+        )
+        path = normalize_game_path(path)
+        if not path:
+            return
+        if path not in self._game_profiles and len(self._game_profiles) >= MAX_GAME_PROFILES:
+            QMessageBox.information(
+                self, self._feature_text("automatic_profiles"),
+                self._feature_text("game_profile_limit", count=MAX_GAME_PROFILES),
+            )
+            return
+        self._game_profiles[path] = ref
+        self._reload_game_profiles()
+
+    def _remove_game_profile(self) -> None:
+        item = self.game_profile_list.currentItem()
+        if item is not None:
+            self._game_profiles.pop(item.data(Qt.ItemDataRole.UserRole), None)
+            self._reload_game_profiles()
 
     def _obs_tab(self) -> QWidget:
         tab = QWidget()
@@ -244,6 +322,7 @@ class SettingsDialog(_BaseSettingsDialog):
         self.profile_combo.setCurrentIndex(index)
         self.profile_combo.blockSignals(False)
         self._update_profile_buttons()
+        self._reload_game_profiles()
 
     def _selected_profile_ref(self) -> str:
         return str(self.profile_combo.currentData() or "")
@@ -387,6 +466,8 @@ class SettingsDialog(_BaseSettingsDialog):
         settings = super().settings()
         settings.overlay_profiles = deepcopy(self._profiles)
         settings.active_overlay_profile = self._active_profile_ref
+        settings.automatic_profiles_enabled = self.automatic_profiles_enabled.isChecked()
+        settings.game_profiles = dict(self._game_profiles)
         settings.obs_enabled = self.obs_enabled.isChecked()
         settings.obs_port = self.obs_port.value()
         settings.obs_max_messages = self.obs_max_messages.value()
@@ -400,6 +481,8 @@ class SettingsDialog(_BaseSettingsDialog):
     def _restore_defaults(self) -> None:
         super()._restore_defaults()
         self._active_profile_ref = ""
+        if hasattr(self, "automatic_profiles_enabled"):
+            self.automatic_profiles_enabled.setChecked(False)
         if hasattr(self, "profile_combo"):
             self._reload_profile_combo()
         if hasattr(self, "obs_enabled"):

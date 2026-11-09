@@ -8,6 +8,45 @@ and add the section **before** publishing the version bump.
 
 ## [Unreleased]
 
+
+## [1.9.2] - 2026-09-08
+
+### Desktop
+
+- Added optional automatic Windows game profiles. Associate a game's executable
+  with a built-in or custom layout; Alt+Tab preserves the game layout, closing
+  the game restores the original, and automation can be paused from the tray.
+- Automatic profiles keep temporary layouts out of saved settings, preserve
+  chat connections and use a bounded local detector without new dependencies.
+- Reduced avoidable YouTube compatibility-mode delay by honoring short server
+  continuations instead of imposing a one-second minimum. Zero-delay replies
+  use a 100 ms guard; official API intervals and retry backoff are preserved.
+  Actual message latency still depends on YouTube and the network.
+
+### Android
+
+- Aligned the release version to 1.9.2 and incremented versionCode to 192.
+
+### Tests
+
+- Added regression coverage for profile switching, Alt+Tab, process exit and
+  handle cleanup, settings persistence, and YouTube continuation timing.
+
+## [1.9.1] - 2026-09-08
+
+### Desktop
+
+- Fixed the settings dialog failing to open on the published Windows build:
+  the overlay injected the OBS browser-source URL into the stock settings
+  dialog, which does not accept that keyword, so clicking the settings button
+  or the tray entry silently did nothing whenever the OBS source was running.
+  The concrete overlay now supplies its extended dialog (profiles, OBS source
+  and diagnostics tabs) through a shell hook, and regression tests lock the
+  dialog-constructor contract so this mismatch cannot ship again.
+- Settings dialogs opened from the overlay now consistently expose the
+  profiles, OBS source and diagnostics tabs regardless of how the flow was
+  triggered.
+
 ### Android
 
 - Fixed the first notification sound after app start being silent: SoundPool
