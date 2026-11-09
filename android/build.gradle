@@ -104,6 +104,15 @@ dependencies {
     implementation "io.grpc:grpc-stub:1.84.0"
     compileOnly "org.apache.tomcat:annotations-api:6.0.53"
 
+    constraints {
+        // A transitive module selected Guava 33.6.0-android, affected by
+        // GHSA-xxph-c9ww-hj94 (unbounded deserialization memory allocation).
+        // Prefer the fixed Android edition, compatible with minSdk 26.
+        implementation("com.google.guava:guava:33.8.0-android") {
+            because "Fix GHSA-xxph-c9ww-hj94 in the resolved Android runtime graph"
+        }
+    }
+
     testImplementation "junit:junit:4.13.2"
     testImplementation "org.json:json:20240303"
     testImplementation "org.robolectric:robolectric:4.16.1"

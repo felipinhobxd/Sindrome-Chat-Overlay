@@ -73,6 +73,19 @@ jobs:
       - name: Build installable debug APK
         run: gradle :android:assembleDebug --stacktrace
 
+      # Keep the release gate independent of other parallel workflows:
+      # a vulnerable transitive Android runtime dependency blocks signing.
+      - name: Set up Python for dependency audit
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Resolve Android runtime Maven graph
+        run: gradle -I tools/export_android_runtime_dependencies.gradle :android:exportResolvedRuntimeModules --stacktrace
+
+      - name: Audit Android runtime and transitive dependencies
+        run: python tools/audit_android_dependencies.py --resolved-file build/android-resolved-maven.txt
+
       - name: Upload tested debug APK
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
