@@ -126,7 +126,7 @@ public final class TwitchProvider extends ChatProvider {
                 // independently of whether the "connected" status was sent.
                 if (thirdPartyEmotes != null && shouldLoadThirdPartyEmotes(
                         emotesRequested, roomId)) {
-                    thirdPartyEmotes.loadOnce(roomId, catalogClient);
+                    thirdPartyEmotes.refreshForConnection(roomId, catalogClient);
                     emotesRequested = true;
                 }
                 if (parsed.message != null) {
