@@ -6,12 +6,12 @@ import threading
 import unittest
 from unittest.mock import Mock, patch
 
-from sindrome_overlay.providers.twitch import TwitchProvider
+from sindrome_overlay.providers.twitch import TwitchProvider, _heartbeat_action
 
 
 class FakeTLSSocket:
-    def __init__(self, *chunks: str) -> None:
-        self.chunks = [part.encode("utf-8") for part in chunks]
+    def __init__(self, *chunks: str | bytes | Exception) -> None:
+        self.chunks = [part.encode("utf-8") if isinstance(part, str) else part for part in chunks]
         self.sent: list[str] = []
         self.closed = False
         self.timeout: float | None = None
@@ -23,14 +23,19 @@ class FakeTLSSocket:
         self.sent.append(payload.decode("utf-8"))
 
     def recv(self, _size: int) -> bytes:
-        return self.chunks.pop(0) if self.chunks else b""
+        part = self.chunks.pop(0) if self.chunks else b""
+        if isinstance(part, Exception):
+            raise part
+        return part
 
     def close(self) -> None:
         self.closed = True
 
 
 class TwitchTransportIntegrationTests(unittest.TestCase):
-    def _listen_script(self, provider: TwitchProvider, socket: FakeTLSSocket) -> None:
+    def _listen_script(
+        self, provider: TwitchProvider, socket: FakeTLSSocket, expected_error: str = "closed the connection"
+    ) -> None:
         raw = Mock()
         context = Mock()
         context.wrap_socket.return_value = socket
@@ -38,7 +43,7 @@ class TwitchTransportIntegrationTests(unittest.TestCase):
             patch("sindrome_overlay.providers.twitch.socket.create_connection", return_value=raw),
             patch("sindrome_overlay.providers.twitch.ssl.create_default_context", return_value=context),
         ):
-            with self.assertRaisesRegex(ConnectionError, "closed the connection"):
+            with self.assertRaisesRegex(ConnectionError, expected_error):
                 provider._listen()
         context.wrap_socket.assert_called_once_with(
             raw, server_hostname="irc.chat.twitch.tv"
@@ -166,6 +171,63 @@ class TwitchTransportIntegrationTests(unittest.TestCase):
             first_thread.join(timeout=3)
             self.assertFalse(first_thread.is_alive())
             self.assertEqual(loaded_rooms, ["456", "456"])
+
+    def test_utf8_codepoint_split_between_recv_calls_is_preserved(self) -> None:
+        provider = TwitchProvider(queue.Queue(), "sindromegames", third_party_emotes=False)
+        line = (
+            "@id=unicode-1;display-name=Ana "
+            ":ana!ana@ana.tmi.twitch.tv PRIVMSG #sindromegames :Oi 🎉!\r\n"
+        ).encode("utf-8")
+        prefix, suffix = line.split("🎉".encode("utf-8"))
+        emoji = "🎉".encode("utf-8")
+        self._listen_script(
+            provider,
+            FakeTLSSocket(prefix + emoji[:2], emoji[2:] + suffix),
+        )
+        messages = [event.message for event in provider.events.queue if event.kind == "message"]
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(messages[0].text, "Oi 🎉!")
+
+    def test_irc_buffer_has_finite_line_limit(self) -> None:
+        provider = TwitchProvider(queue.Queue(), "sindromegames", third_party_emotes=False)
+        socket = FakeTLSSocket("x" * 40_000, "y" * 40_000)
+        self._listen_script(provider, socket, expected_error="IRC line exceeds size limit")
+        self.assertTrue(socket.closed)
+
+    def test_heartbeat_decision_respects_idle_and_grace_periods(self) -> None:
+        self.assertEqual(_heartbeat_action(44.99, 0.0, None), 0)
+        self.assertEqual(_heartbeat_action(45.0, 0.0, None), 1)
+        self.assertEqual(_heartbeat_action(56.9, 0.0, 45.0), 0)
+        self.assertEqual(_heartbeat_action(57.0, 0.0, 45.0), 2)
+
+    def test_idle_connection_pings_then_reconnects_after_grace(self) -> None:
+        provider = TwitchProvider(queue.Queue(), "sindromegames", third_party_emotes=False)
+        socket = FakeTLSSocket(TimeoutError(), TimeoutError())
+        readings = iter([0.0, 46.0, 59.0])
+        with patch(
+            "sindrome_overlay.providers.twitch.time.monotonic",
+            side_effect=lambda: next(readings, 59.0),
+        ):
+            self._listen_script(provider, socket, expected_error="heartbeat timed out")
+        self.assertEqual(socket.sent.count("PING :sindrome-overlay\r\n"), 1)
+        self.assertTrue(socket.closed)
+
+    def test_new_inbound_traffic_resets_unanswered_heartbeat(self) -> None:
+        provider = TwitchProvider(queue.Queue(), "sindromegames", third_party_emotes=False)
+        socket = FakeTLSSocket(
+            TimeoutError(),
+            "PING :tmi.twitch.tv\r\n",
+            TimeoutError(),
+            TimeoutError(),
+        )
+        readings = iter([0.0, 46.0, 46.5, 91.0, 104.0])
+        with patch(
+            "sindrome_overlay.providers.twitch.time.monotonic",
+            side_effect=lambda: next(readings, 104.0),
+        ):
+            self._listen_script(provider, socket)
+        self.assertEqual(socket.sent.count("PING :sindrome-overlay\r\n"), 2)
+        self.assertIn("PONG :tmi.twitch.tv\r\n", socket.sent)
 
     def test_tls_handshake_failure_closes_raw_socket(self) -> None:
         provider = TwitchProvider(queue.Queue(), "sindromegames", third_party_emotes=False)
