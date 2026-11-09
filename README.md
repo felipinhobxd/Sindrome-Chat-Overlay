@@ -205,7 +205,7 @@ The workflow runs after a push to `main` and can also be started manually from *
 
 ## Android builds and releases
 
-`.github/workflows/build-android.yml` uses JDK 17, Gradle 8.10.2 and Android API 35. Every pull request runs Android unit tests and lint, then uploads an installable debug APK as a workflow artifact. After the Windows workflow publishes a versioned Release, the Android workflow builds, verifies, checksums, and attaches the signed release APK to the same tag.
+`.github/workflows/build-android.yml` uses JDK 17, Gradle 9.6.0, Android Gradle Plugin 9.4.0, and Android API 37 for compilation (the app still targets API 35 and supports devices from API 26). For local builds, install the SDK platform package `platforms;android-37.0` and Build Tools `36.0.0`; the package name is **not** `platforms;android-37`. Every pull request runs Android unit tests, lint, an unsigned minified release build, and instrumented emulator tests, then uploads an installable debug APK as a workflow artifact. After the Windows workflow publishes a versioned Release, the Android workflow builds, verifies, checksums, and attaches the signed release APK to the same tag.
 
 Release signing is deliberately private. Run `tools/GENERATE_ANDROID_SIGNING_KEY.ps1` once on a trusted Windows PC with a JDK installed, keep the generated `.jks` file backed up, and add the four generated values as GitHub Actions repository Secrets:
 
