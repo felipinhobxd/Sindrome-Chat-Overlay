@@ -99,7 +99,7 @@ dependencies {
     implementation "androidx.appcompat:appcompat:1.7.0"
     implementation "androidx.recyclerview:recyclerview:1.4.0"
     implementation "com.google.android.material:material:1.12.0"
-    implementation "com.squareup.okhttp3:okhttp:4.12.0"
+    implementation "com.squareup.okhttp3:okhttp:5.5.0"
     implementation "io.grpc:grpc-okhttp:1.85.1"
     implementation "io.grpc:grpc-protobuf-lite:1.85.1"
     // Protoc 4.36.1 emits @com.google.protobuf.Generated; keep the Lite
