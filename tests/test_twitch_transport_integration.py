@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import queue
 import ssl
+import threading
 import unittest
 from unittest.mock import Mock, patch
 
@@ -112,6 +113,59 @@ class TwitchTransportIntegrationTests(unittest.TestCase):
             provider._ensure_third_party_emotes("not-a-room-id")
             self.assertIsNone(provider._emote_loader_thread)
             load.assert_not_called()
+
+    def test_reconnect_refreshes_channel_emotes_in_each_irc_session(self) -> None:
+        events: queue.Queue = queue.Queue()
+        provider = TwitchProvider(events, "sindromegames", third_party_emotes=True)
+        assert provider._third_party is not None
+        greeting = "@room-id=123 :tmi.twitch.tv ROOMSTATE #sindromegames\\r\\n"
+        with patch.object(provider._third_party, "load") as load:
+            self._listen_script(provider, FakeTLSSocket(greeting))
+            first_thread = provider._emote_loader_thread
+            self.assertIsNotNone(first_thread)
+            first_thread.join(timeout=2)
+            self.assertFalse(first_thread.is_alive())
+
+            self._listen_script(provider, FakeTLSSocket(greeting))
+            second_thread = provider._emote_loader_thread
+            self.assertIsNotNone(second_thread)
+            second_thread.join(timeout=2)
+            self.assertFalse(second_thread.is_alive())
+            self.assertEqual(load.call_count, 2)
+            load.assert_any_call("123")
+
+    def test_reconnect_queues_refresh_without_overlapping_downloads(self) -> None:
+        events: queue.Queue = queue.Queue()
+        provider = TwitchProvider(events, "sindromegames", third_party_emotes=True)
+        assert provider._third_party is not None
+        first_started = threading.Event()
+        release_first = threading.Event()
+        loaded_rooms: list[str] = []
+
+        def slow_first_load(room_id: str) -> None:
+            loaded_rooms.append(room_id)
+            if len(loaded_rooms) == 1:
+                first_started.set()
+                release_first.wait(timeout=5)
+
+        greeting = "@room-id=456 :tmi.twitch.tv ROOMSTATE #sindromegames\\r\\n"
+        with patch.object(provider._third_party, "load", side_effect=slow_first_load):
+            try:
+                self._listen_script(provider, FakeTLSSocket(greeting))
+                first_thread = provider._emote_loader_thread
+                self.assertIsNotNone(first_thread)
+                self.assertTrue(first_started.wait(timeout=2))
+
+                # A second IRC session must schedule a refresh, but not launch
+                # another network download while the first one is blocked.
+                self._listen_script(provider, FakeTLSSocket(greeting))
+                self.assertIs(provider._emote_loader_thread, first_thread)
+                self.assertEqual(loaded_rooms, ["456"])
+            finally:
+                release_first.set()
+            first_thread.join(timeout=3)
+            self.assertFalse(first_thread.is_alive())
+            self.assertEqual(loaded_rooms, ["456", "456"])
 
     def test_tls_handshake_failure_closes_raw_socket(self) -> None:
         provider = TwitchProvider(queue.Queue(), "sindromegames", third_party_emotes=False)
