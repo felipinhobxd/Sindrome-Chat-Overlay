@@ -63,6 +63,70 @@ class SettingsStoreTests(unittest.TestCase):
             loaded = SettingsStore(path).load()
             self.assertEqual(loaded, Settings())
 
+    def test_malformed_field_types_keep_valid_preferences(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "settings.json"
+            path.write_text(
+                json.dumps({
+                    "language": ["pt-BR"],
+                    "twitch_channel": 123,
+                    "youtube_input": {"url": "not-a-string"},
+                    "youtube_api_key": 123,
+                    "always_on_top": "false",
+                    "font_size": {"not": "a number"},
+                    "window_x": ["not an integer"],
+                    "twitch_enabled": False,
+                    "background_opacity": 35,
+                    "max_messages": 250,
+                }),
+                encoding="utf-8",
+            )
+            loaded = SettingsStore(path).load()
+            defaults = Settings()
+            self.assertEqual(loaded.language, defaults.language)
+            self.assertEqual(loaded.twitch_channel, defaults.twitch_channel)
+            self.assertEqual(loaded.youtube_input, defaults.youtube_input)
+            self.assertEqual(loaded.youtube_api_key, "")
+            self.assertEqual(loaded.always_on_top, defaults.always_on_top)
+            self.assertEqual(loaded.font_size, defaults.font_size)
+            self.assertEqual(loaded.window_x, defaults.window_x)
+            self.assertFalse(loaded.twitch_enabled)
+            self.assertEqual(loaded.background_opacity, 35)
+            self.assertEqual(loaded.max_messages, 250)
+
+    def test_invalid_channel_strings_preserve_unrelated_settings(self) -> None:
+        for field_name, bad_value in (
+            ("twitch_channel", "https://not-twitch.example/channel"),
+            ("youtube_input", "https://not-youtube.example/live"),
+        ):
+            with self.subTest(field=field_name), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "settings.json"
+                path.write_text(
+                    json.dumps({
+                        field_name: bad_value,
+                        "background_opacity": 42,
+                        "font_size": 21,
+                        "sound_volume": 135,
+                    }),
+                    encoding="utf-8",
+                )
+                loaded = SettingsStore(path).load()
+                self.assertEqual(getattr(loaded, field_name), getattr(Settings(), field_name))
+                self.assertEqual(loaded.background_opacity, 42)
+                self.assertEqual(loaded.font_size, 21)
+                self.assertEqual(loaded.sound_volume, 135)
+
+    def test_numeric_strings_remain_compatible_with_old_settings_files(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "settings.json"
+            path.write_text(
+                json.dumps({"font_size": "18", "window_y": "120"}),
+                encoding="utf-8",
+            )
+            loaded = SettingsStore(path).load()
+            self.assertEqual(loaded.font_size, 18)
+            self.assertEqual(loaded.window_y, 120)
+
     def test_disabled_channels_may_be_blank(self) -> None:
         settings = Settings(
             twitch_enabled=False,

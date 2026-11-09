@@ -160,7 +160,9 @@ def find_continuation(node: Any) -> tuple[str, int]:
         value = find_first_key(node, continuation_type)
         if isinstance(value, dict) and value.get("continuation"):
             try:
-                timeout_ms = int(value.get("timeoutMs") or 2_000)
+                timeout_ms = int(value.get("timeoutMs", 2_000))
+                if timeout_ms < 0:
+                    timeout_ms = 2_000
             except (TypeError, ValueError):
                 timeout_ms = 2_000
             return str(value["continuation"]), timeout_ms
@@ -718,7 +720,9 @@ class YouTubeProvider(BaseProvider):
                 raise ChatUnavailable("The live chat was closed.")
             continuation = next_continuation
             failures = 0
-            if self.wait(max(1.0, timeout_ms / 1000)):
+            # Preserve short continuations instead of imposing a full second
+            # of extra latency. A small floor only guards zero-delay loops.
+            if self.wait(max(0.1, timeout_ms / 1000)):
                 return
 
     def _bootstrap_chat(self, video_id: str) -> YouTubeBootstrap:

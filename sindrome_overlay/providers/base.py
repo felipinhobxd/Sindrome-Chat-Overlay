@@ -6,9 +6,7 @@ import threading
 
 from ..events import ProviderEvent
 from ..models import ChatMessage
-
-
-_MAX_PENDING_EVENTS = 500
+from ..provider_event_queue import ProviderEventQueue
 
 
 class BaseProvider(threading.Thread):
@@ -18,7 +16,6 @@ class BaseProvider(threading.Thread):
         super().__init__(name=f"{self.platform}-chat", daemon=True)
         self.events = events
         self.stop_event = threading.Event()
-        self._emit_lock = threading.Lock()
         self.log = logging.getLogger(f"sindrome_overlay.{self.platform}")
 
     def stop(self) -> None:
@@ -63,21 +60,16 @@ class BaseProvider(threading.Thread):
         self._emit(ProviderEvent(kind="clear", platform=self.platform))
 
     def _emit(self, event: ProviderEvent) -> None:
-        """Keep provider backlogs bounded if the UI cannot drain events fast enough."""
+        """Publish events without allowing chat floods to erase moderation."""
+        if isinstance(self.events, ProviderEventQueue):
+            accepted = self.events.offer(event, stop_event=self.stop_event)
+            if not accepted and event.kind != "message" and not self.stop_event.is_set():
+                self.log.warning("Could not enqueue %s event (queue closed)", event.kind)
+            return
+
+        # Compatibility with callers that provide a regular Queue. The desktop
+        # overlay always supplies ProviderEventQueue for coordinated admission.
         try:
-            # Twitch and YouTube emit from their own threads; without the lock
-            # both can race the size check and drop more events than needed
-            # (or drop a fresh status while keeping a stale one).
-            with self._emit_lock:
-                while self.events.qsize() >= _MAX_PENDING_EVENTS:
-                    self.events.get_nowait()
-                self.events.put_nowait(event)
-        except queue.Empty:
             self.events.put_nowait(event)
         except queue.Full:
-            # Also works if callers later replace the current unbounded queue with a bounded one.
-            try:
-                self.events.get_nowait()
-                self.events.put_nowait(event)
-            except (queue.Empty, queue.Full):
-                self.log.warning("Dropping %s event because the UI event queue is full", event.kind)
+            self.log.warning("Dropping %s event because the queue is full", event.kind)

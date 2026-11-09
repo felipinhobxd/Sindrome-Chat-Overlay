@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import ntpath
 from typing import Any, Mapping
 
 from .feature_i18n import feature_tr
 
 MAX_CUSTOM_PROFILES = 12
+MAX_GAME_PROFILES = 32
 _MAX_PROFILE_NAME = 40
 
 # Overlay profiles intentionally exclude credentials, channel inputs, update preferences,
@@ -166,6 +168,32 @@ def resolve_profile(
         values = normalize_custom_profiles(custom_profiles).get(name)
         return dict(values) if values is not None else None
     return None
+
+
+def normalize_game_path(value: Any) -> str:
+    if not isinstance(value, str) or not value or len(value) > 32767:
+        return ""
+    if any(ord(char) < 32 for char in value):
+        return ""
+    path = ntpath.normcase(ntpath.normpath(value))
+    drive, tail = ntpath.splitdrive(path)
+    if not drive or not tail.startswith("\\") or not path.endswith(".exe"):
+        return ""
+    return path
+
+
+def normalize_game_profiles(value: Any, custom_profiles: Mapping | None) -> dict[str, str]:
+    if not isinstance(value, Mapping):
+        return {}
+    result: dict[str, str] = {}
+    for raw_path, raw_ref in value.items():
+        path = normalize_game_path(raw_path)
+        ref = normalize_profile_ref(raw_ref, custom_profiles)
+        if path and ref:
+            result[path] = ref
+        if len(result) >= MAX_GAME_PROFILES:
+            break
+    return result
 
 
 def capture_overlay_profile(settings: Any) -> dict[str, Any]:
