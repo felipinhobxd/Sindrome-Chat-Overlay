@@ -101,6 +101,9 @@ dependencies {
     implementation "com.squareup.okhttp3:okhttp:4.12.0"
     implementation "io.grpc:grpc-okhttp:1.85.1"
     implementation "io.grpc:grpc-protobuf-lite:1.85.1"
+    // Protoc 4.36.1 emits @com.google.protobuf.Generated; keep the Lite
+    // runtime at the same version as the generated source compiler.
+    implementation "com.google.protobuf:protobuf-javalite:4.36.1"
     implementation "io.grpc:grpc-stub:1.85.1"
     compileOnly "org.apache.tomcat:annotations-api:6.0.53"
 
