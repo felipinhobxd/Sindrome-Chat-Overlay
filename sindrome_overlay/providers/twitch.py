@@ -31,17 +31,20 @@ def _heartbeat_action(now: float, last_inbound: float, heartbeat_sent: float | N
 
 
 def decode_irc_tag(value: str) -> str:
-    replacements = {
-        r"\s": " ",
-        r"\:": ";",
-        r"\r": "\r",
-        r"\n": "\n",
-        r"\\": "\\",
-    }
-    result = value
-    for encoded, decoded in replacements.items():
-        result = result.replace(encoded, decoded)
-    return result
+    """Decode IRCv3 tag escapes exactly once, including literal backslashes."""
+    escapes = {"s": " ", ":": ";", "r": "\r", "n": "\n", "\\": "\\"}
+    decoded: list[str] = []
+    index = 0
+    while index < len(value):
+        if value[index] == "\\" and index + 1 < len(value):
+            char = value[index + 1]
+            if char in escapes:
+                decoded.append(escapes[char])
+                index += 2
+                continue
+        decoded.append(value[index])
+        index += 1
+    return "".join(decoded)
 
 
 def parse_irc_tags(raw: str) -> dict[str, str]:
@@ -150,10 +153,14 @@ def parse_twitch_line(line: str, language: str = "en") -> tuple[str, ChatMessage
         amount = f"{tags['bits']} Bits" if tags.get("bits") else ""
         timestamp = datetime.now(UTC)
         if tags.get("tmi-sent-ts", "").isdigit():
-            timestamp = datetime.fromtimestamp(
-                int(tags["tmi-sent-ts"]) / 1000,
-                UTC,
-            )
+            try:
+                timestamp = datetime.fromtimestamp(
+                    int(tags["tmi-sent-ts"]) / 1000,
+                    UTC,
+                )
+            except (OverflowError, OSError, ValueError):
+                # Invalid remote timestamps must not disconnect the whole IRC chat.
+                pass
         return (
             "message",
             ChatMessage(
