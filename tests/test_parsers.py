@@ -266,6 +266,37 @@ class YouTubeParserTests(unittest.TestCase):
         self.assertEqual(messages[0].kind, "paid")
         self.assertEqual(deletions, ["paid-1"])
 
+    def test_youtube_author_moderation_is_scoped_and_replay_aware(self) -> None:
+        author_ids: list[str] = []
+        actions = [
+            {"addChatItemAction": {"item": {"liveChatTextMessageRenderer": {
+                "id": "yt-banned-message",
+                "authorExternalChannelId": "UC-banned",
+                "authorName": {"simpleText": "Viewer"},
+                "message": {"runs": [{"text": "To be removed"}]},
+            }}}},
+            {"replayChatItemAction": {"actions": [
+                {"markChatItemsByAuthorAsDeletedAction": {
+                    "externalChannelId": "UC-banned",
+                }},
+            ]}},
+            {"markChatItemAsDeletedAction": {"targetItemId": "individual-message"}},
+            {"markChatItemsByAuthorAsDeletedAction": {"externalChannelId": ""}},
+            {"markChatItemsByAuthorAsDeletedAction": {"externalChannelId": ["invalid"]}},
+        ]
+        messages, deletions = youtube_messages_from_actions(
+            actions, deleted_author_ids=author_ids
+        )
+        self.assertEqual([m.message_id for m in messages], ["yt-banned-message"])
+        self.assertEqual(messages[0].author_id, "UC-banned")
+        self.assertEqual(deletions, ["individual-message"])
+        self.assertEqual(author_ids, ["UC-banned"])
+
+        # Preserve the existing two-value parser API for older callers.
+        old_messages, old_deletions = youtube_messages_from_actions(actions)
+        self.assertEqual([m.message_id for m in old_messages], ["yt-banned-message"])
+        self.assertEqual(old_deletions, ["individual-message"])
+
     def test_innertube_uses_browse_id_when_external_id_is_missing(self) -> None:
         actions = [
             {

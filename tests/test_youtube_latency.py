@@ -99,6 +99,58 @@ class YouTubeLatencyTests(unittest.TestCase):
         self.assertEqual([call.kwargs["json"]["continuation"] for call in post.call_args_list],
                          ["first", "next"])
 
+    def test_innertube_author_ban_emits_scoped_moderation_event(self):
+        provider = self._provider()
+        actions = [
+            {"addChatItemAction": {"item": {"liveChatTextMessageRenderer": {
+                "id": "bad-message",
+                "authorExternalChannelId": "UC-bad",
+                "authorName": {"simpleText": "Bad"},
+                "message": {"runs": [{"text": "Remove me"}]},
+            }}}},
+            {"addChatItemAction": {"item": {"liveChatTextMessageRenderer": {
+                "id": "good-message",
+                "authorExternalChannelId": "UC-good",
+                "authorName": {"simpleText": "Good"},
+                "message": {"runs": [{"text": "Keep me"}]},
+            }}}},
+            {"markChatItemsByAuthorAsDeletedAction": {
+                "externalChannelId": "UC-bad",
+            }},
+            {"markChatItemAsDeletedAction": {"targetItemId": "one-message"}},
+        ]
+        response = Mock(status_code=200)
+        response.json.return_value = {
+            "continuationContents": {"liveChatContinuation": {
+                "actions": actions,
+                "continuations": continuation(500),
+            }}
+        }
+        with (
+            patch.object(provider.session, "post", return_value=response),
+            patch.object(provider, "wait", return_value=True),
+        ):
+            provider._run_innertube("abcdefghijk")
+
+        events = []
+        while not provider.events.empty():
+            event = provider.events.get_nowait()
+            if event.kind != "status":
+                events.append(event)
+        self.assertEqual(
+            [(event.kind, event.platform) for event in events],
+            [
+                ("message", "youtube"),
+                ("message", "youtube"),
+                ("delete", "youtube"),
+                ("delete_author", "youtube"),
+            ],
+        )
+        self.assertEqual([event.message.message_id for event in events[:2]],
+                         ["bad-message", "good-message"])
+        self.assertEqual(events[2].message_id, "one-message")
+        self.assertEqual(events[3].author_id, "UC-bad")
+
     def test_zero_guard_and_long_server_intervals_are_respected(self):
         for timeout, expected in ((0, 0.1), (125, 0.125), (2375, 2.375), (5000, 5.0)):
             with self.subTest(timeout=timeout):
