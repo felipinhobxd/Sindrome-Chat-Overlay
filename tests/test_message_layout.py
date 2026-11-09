@@ -112,6 +112,36 @@ class MessageLayoutRegressionTests(unittest.TestCase):
             message_id=f"layout-{number}", **kwargs,
         )
 
+    def test_height_cache_separates_twitch_and_youtube_equal_message_ids(self) -> None:
+        from PySide6.QtWidgets import QStyleOptionViewItem
+
+        from sindrome_overlay.models import ChatMessage
+
+        twitch = ChatMessage(
+            "twitch", "viewer", "Short", message_id="shared-id"
+        )
+        youtube = ChatMessage(
+            "youtube", "viewer", "A very long line " * 40,
+            message_id="shared-id"
+        )
+        view = self.view([twitch, youtube], width=320, height=360)
+        delegate = view.itemDelegate()
+        model = view.model()
+        width = max(1, view.viewport().width() - 2 * view.spacing())
+        twitch_key = delegate._cache_key(model.index(0, 0), width)
+        youtube_key = delegate._cache_key(model.index(1, 0), width)
+        self.assertIsNotNone(twitch_key)
+        self.assertIsNotNone(youtube_key)
+        self.assertNotEqual(twitch_key, youtube_key)
+
+        # A measured first platform's height must not bleed into the second.
+        delegate._height_cache[twitch_key] = 12_345
+        option = QStyleOptionViewItem()
+        self.assertNotEqual(
+            delegate.sizeHint(option, model.index(1, 0)).height(),
+            12_345,
+        )
+
     def test_extreme_name_three_badges_platform_timestamp_and_bits(self) -> None:
         from PySide6.QtWidgets import QLabel
 

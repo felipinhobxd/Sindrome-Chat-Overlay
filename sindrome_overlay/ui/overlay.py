@@ -119,8 +119,9 @@ class OverlayShell(QMainWindow):
         self.providers: list[BaseProvider] = []
         self.messages: list[ChatMessage] = []
         self._created_monotonic: list[float] = []
-        self.seen_ids: set[str] = set()
-        self.seen_order: deque[str] = deque(maxlen=5_000)
+        # Platform identifiers are independent: equal Twitch/YouTube IDs are distinct.
+        self.seen_ids: set[tuple[str, str]] = set()
+        self.seen_order: deque[tuple[str, str]] = deque(maxlen=5_000)
         self.status_labels: dict[str, QLabel] = {}
         self.youtube_connection_mode = (
             "official_configured" if settings.youtube_api_key else "compatibility"
@@ -750,23 +751,24 @@ class OverlayShell(QMainWindow):
                     self.youtube_connection_mode = event.mode
                 self._set_status(event.platform, event.state, event.text)
             elif event.kind == "delete" and event.message_id:
-                self._remove_message_id(event.message_id)
+                self._remove_message_id(event.message_id, event.platform)
             elif event.kind == "delete_author" and event.author_id:
-                self._remove_author_id(event.author_id)
+                self._remove_author_id(event.author_id, event.platform)
             elif event.kind == "clear":
                 self.clear_messages(event.platform)
 
     def add_message(self, message: ChatMessage) -> None:
         if not should_display(message, self.settings):
             return
-        if message.message_id and message.message_id in self.seen_ids:
-            return
         if message.message_id:
+            identity = (message.platform, message.message_id)
+            if identity in self.seen_ids:
+                return
             if len(self.seen_order) == self.seen_order.maxlen:
                 oldest = self.seen_order.popleft()
                 self.seen_ids.discard(oldest)
-            self.seen_order.append(message.message_id)
-            self.seen_ids.add(message.message_id)
+            self.seen_order.append(identity)
+            self.seen_ids.add(identity)
         self.messages.append(message)
         self._created_monotonic.append(time.monotonic())
         self._append_card(message)
@@ -794,16 +796,22 @@ class OverlayShell(QMainWindow):
         while self._created_monotonic and now - self._created_monotonic[0] >= lifetime:
             self.remove_at(0)
 
-    def _remove_message_id(self, message_id: str) -> None:
+    def _remove_message_id(self, message_id: str, platform: str = "") -> None:
+        # Remote moderation must not erase an unrelated platform's matching ID.
         for index, message in enumerate(self.messages):
-            if message.message_id == message_id:
+            if message.message_id == message_id and (
+                not platform or message.platform == platform
+            ):
                 self.remove_at(index)
                 return
 
-    def _remove_author_id(self, author_id: str) -> None:
-        # Ban/timeout: remove every surviving message from that account.
+    def _remove_author_id(self, author_id: str, platform: str = "") -> None:
+        # Ban/timeout: limit remote actions to the account's own platform.
         for index in range(len(self.messages) - 1, -1, -1):
-            if self.messages[index].author_id == author_id:
+            message = self.messages[index]
+            if message.author_id == author_id and (
+                not platform or message.platform == platform
+            ):
                 self.remove_at(index)
 
     def clear_messages(self, platform: str = "") -> None:

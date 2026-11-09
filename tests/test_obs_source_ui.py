@@ -183,6 +183,99 @@ class ObsSourceUiTests(unittest.TestCase):
                 window.close()
                 app.processEvents()
 
+    def test_moderation_keeps_same_ids_on_other_platform_in_ui_and_obs(self) -> None:
+        from unittest.mock import patch
+
+        from PySide6.QtWidgets import QApplication
+
+        from sindrome_overlay.events import ProviderEvent
+        from sindrome_overlay.models import ChatMessage
+        from sindrome_overlay.obs_source import ObsChatSourceServer
+        from sindrome_overlay.settings import Settings, SettingsStore
+        from sindrome_overlay.ui.virtualized_overlay import OverlayWindow
+
+        app = QApplication.instance() or QApplication([])
+        settings = Settings(
+            twitch_enabled=False,
+            youtube_enabled=False,
+            sound_enabled=False,
+            check_for_updates=False,
+            obs_enabled=True,
+            obs_port=_free_local_port(),
+            max_messages=300,
+        )
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            ObsChatSourceServer, "_load_badge_images_async"
+        ):
+            window = OverlayWindow(
+                settings,
+                SettingsStore(Path(directory) / "settings.json"),
+                logging.getLogger("stage11-moderation"),
+            )
+            try:
+                window.show()
+                app.processEvents()
+                self.assertTrue(window.obs_source.running)
+
+                window.add_message(
+                    ChatMessage("twitch", "T", "Twitch " * 30,
+                                author_id="same-author", message_id="same-id")
+                )
+                window.add_message(
+                    ChatMessage("youtube", "Y", "YouTube " * 5,
+                                author_id="same-author", message_id="same-id")
+                )
+                window.add_message(
+                    ChatMessage("twitch", "T", "duplicate",
+                                author_id="same-author", message_id="same-id")
+                )
+                self.assertEqual(
+                    [m.platform for m in window.messages], ["twitch", "youtube"]
+                )
+                self.assertEqual(window.message_model.rowCount(), 2)
+                self.assertEqual(
+                    [m["platform"] for m in window.obs_source.snapshot()["messages"]],
+                    ["twitch", "youtube"],
+                )
+
+                window.events.offer(
+                    ProviderEvent(kind="delete", platform="twitch", message_id="same-id")
+                )
+                window._drain_events()
+                self.assertEqual([m.platform for m in window.messages], ["youtube"])
+                self.assertEqual(
+                    [m["platform"] for m in window.obs_source.snapshot()["messages"]],
+                    ["youtube"],
+                )
+
+                window.add_message(
+                    ChatMessage("twitch", "T", "timeout me",
+                                author_id="same-author", message_id="new-id")
+                )
+                window.events.offer(
+                    ProviderEvent(
+                        kind="delete_author", platform="twitch",
+                        author_id="same-author"
+                    )
+                )
+                window._drain_events()
+                self.assertEqual([m.platform for m in window.messages], ["youtube"])
+                self.assertEqual(
+                    [m["platform"] for m in window.obs_source.snapshot()["messages"]],
+                    ["youtube"],
+                )
+                self.assertEqual(window.message_model.rowCount(), 1)
+
+                window.events.offer(
+                    ProviderEvent(kind="delete", platform="youtube", message_id="same-id")
+                )
+                window._drain_events()
+                self.assertEqual(window.messages, [])
+                self.assertEqual(window.obs_source.snapshot()["messages"], [])
+            finally:
+                window.close()
+                app.processEvents()
+
     def test_overlay_feeds_obs_history_independently_from_desktop_expiry(self) -> None:
         from PySide6.QtWidgets import QApplication
 

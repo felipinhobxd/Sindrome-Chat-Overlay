@@ -306,16 +306,15 @@ class MessageCardDelegate(QStyledItemDelegate):
                 }
         message = index.data(MessageListModel.MessageRole)
         message_id = message.message_id if isinstance(message, ChatMessage) else ""
-        # Cache by the stable platform message id. Keying by id(message) was a
-        # correctness bug: CPython may hand a collected object's id() to a
-        # different message, which served a wrong cached height. Messages
-        # without an id simply bypass the cache.
+        # Chat IDs only identify messages within one provider. A Twitch and
+        # YouTube message can have identical IDs but very different heights.
+        # Messages without an ID bypass the cache.
         if not message_id:
             return None
         if len(self._height_cache) > self._MAX_HEIGHT_CACHE_ENTRIES:
             for stale in list(self._height_cache)[: len(self._height_cache) // 4]:
                 del self._height_cache[stale]
-        return (message_id, width, self._settings_signature())
+        return (f"{message.platform}:{message_id}", width, self._settings_signature())
 
     def _fonts(self) -> tuple[QFont, QFont, QFontMetrics, QFontMetrics]:
         """Reusable fonts/metrics: _estimate_height and paint run per visible
