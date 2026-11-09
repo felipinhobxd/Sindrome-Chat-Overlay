@@ -128,6 +128,41 @@ class ObsSourceServerTests(unittest.TestCase):
         self.server.clear_messages("youtube")
         self.assertEqual(self.server.snapshot()["messages"], [])
 
+    def test_equal_ids_and_author_ids_from_two_platforms_are_independent(self) -> None:
+        twitch = ChatMessage(
+            "twitch", "tw-viewer", "twitch text",
+            author_id="same-user", message_id="same-message"
+        )
+        youtube = ChatMessage(
+            "youtube", "yt-viewer", "youtube text",
+            author_id="same-user", message_id="same-message"
+        )
+        self.server.publish_message(twitch)
+        self.server.publish_message(youtube)
+        self.server.publish_message(twitch)  # Duplicate within one provider.
+        self.assertEqual(
+            [(m["platform"], m["message_id"]) for m in self.server.snapshot()["messages"]],
+            [("twitch", "same-message"), ("youtube", "same-message")],
+        )
+
+        self.server.remove_message("same-message", "twitch")
+        self.assertEqual(
+            [(m["platform"], m["message_id"]) for m in self.server.snapshot()["messages"]],
+            [("youtube", "same-message")],
+        )
+
+        self.server.publish_message(
+            ChatMessage("twitch", "tw-viewer", "another",
+                        author_id="same-user", message_id="other")
+        )
+        self.server.remove_by_author("same-user", "twitch")
+        self.assertEqual(
+            [m["platform"] for m in self.server.snapshot()["messages"]],
+            ["youtube"],
+        )
+        self.server.remove_message("same-message", "youtube")
+        self.assertEqual(self.server.snapshot()["messages"], [])
+
     def test_config_update_does_not_expire_messages_by_time(self) -> None:
         self.server.publish_message(
             ChatMessage("twitch", "one", "persistent", message_id="persistent")
