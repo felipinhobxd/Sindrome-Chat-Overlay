@@ -73,6 +73,12 @@ jobs:
       - name: Build installable debug APK
         run: gradle :android:assembleDebug --stacktrace
 
+      # Catch R8/minification or resource-shrinking regressions before a PR merge.
+      # Pull requests do not receive signing credentials, so this is unsigned.
+      - name: Build unsigned minified release APK on pull requests
+        if: github.event_name == 'pull_request'
+        run: gradle :android:assembleRelease --stacktrace
+
       # Keep the release gate independent of other parallel workflows:
       # a vulnerable transitive Android runtime dependency blocks signing.
       - name: Set up Python for dependency audit
