@@ -73,13 +73,11 @@ class YouTubeGrpcLoopbackTests(unittest.TestCase):
         provider._emit_once = capture_and_stop
         try:
             with (
-                patch(
-                    "sindrome_overlay.providers.youtube.grpc.secure_channel",
-                    side_effect=lambda *_args, **_kwargs: grpc.insecure_channel(
-                        f"127.0.0.1:{port}"
-                    ),
+                patch.object(
+                    provider,
+                    "_open_stream_channel",
+                    side_effect=lambda: grpc.insecure_channel(f"127.0.0.1:{port}"),
                 ),
-                patch("sindrome_overlay.providers.youtube.grpc.ssl_channel_credentials"),
                 patch.object(provider, "wait", return_value=False),
             ):
                 provider._run_official_stream("abcdefghijk", "live-chat-test")
@@ -106,13 +104,11 @@ class YouTubeGrpcLoopbackTests(unittest.TestCase):
         )
         try:
             with (
-                patch(
-                    "sindrome_overlay.providers.youtube.grpc.secure_channel",
-                    side_effect=lambda *_args, **_kwargs: grpc.insecure_channel(
-                        f"127.0.0.1:{port}"
-                    ),
+                patch.object(
+                    provider,
+                    "_open_stream_channel",
+                    side_effect=lambda: grpc.insecure_channel(f"127.0.0.1:{port}"),
                 ),
-                patch("sindrome_overlay.providers.youtube.grpc.ssl_channel_credentials"),
                 self.assertRaises(ApiKeyRejected),
             ):
                 provider._run_official_stream("abcdefghijk", "live-chat-test")
