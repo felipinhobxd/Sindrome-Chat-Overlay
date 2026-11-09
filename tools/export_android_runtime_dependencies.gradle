@@ -1,0 +1,32 @@
+// Used by GitHub Actions to audit the actual Maven modules selected by Gradle.
+// Keep the audit task outside the application build scripts and resolve only the
+// shipping runtime graph (not Robolectric / Android instrumentation dependencies).
+gradle.projectsEvaluated {
+    def androidProject = gradle.rootProject.project(":android")
+    androidProject.tasks.register("exportResolvedRuntimeModules") {
+        group = "verification"
+        description = "Export actual debug/release runtime Maven dependencies for the OSV audit."
+        doLast {
+            def coordinates = new TreeSet<String>()
+            ["releaseRuntimeClasspath", "debugRuntimeClasspath"].each { name ->
+                def configuration = androidProject.configurations.findByName(name)
+                if (configuration == null || !configuration.canBeResolved) {
+                    throw new GradleException("Cannot resolve runtime dependencies: " + name)
+                }
+                configuration.incoming.resolutionResult.allComponents.each { component ->
+                    def id = component.id
+                    if (id instanceof org.gradle.api.artifacts.component.ModuleComponentIdentifier) {
+                        coordinates.add("${id.group}:${id.module}:${id.version}".toString())
+                    }
+                }
+            }
+            if (coordinates.isEmpty()) {
+                throw new GradleException("No runtime dependencies were resolved; audit cannot proceed")
+            }
+            def output = new File(gradle.rootProject.buildDir, "android-resolved-maven.txt")
+            output.parentFile.mkdirs()
+            output.setText(coordinates.join("\n") + "\n", "UTF-8")
+            println("Exported ${coordinates.size()} resolved Maven coordinates: ${output}")
+        }
+    }
+}
