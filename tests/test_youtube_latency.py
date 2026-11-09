@@ -25,6 +25,38 @@ class YouTubeLatencyTests(unittest.TestCase):
             with self.subTest(invalid=invalid):
                 self.assertEqual(find_continuation(continuation(invalid)), ("next", 2000))
 
+    def test_continuation_rejects_overflow_and_caps_excessive_waits(self):
+        for timeout in (300_000, 10**18, "9" * 400):
+            with self.subTest(timeout=str(timeout)[:30]):
+                self.assertEqual(find_continuation(continuation(timeout)), ("next", 300_000))
+        for timeout in (float("inf"), float("-inf")):
+            with self.subTest(timeout=timeout):
+                self.assertEqual(find_continuation(continuation(timeout)), ("next", 2_000))
+
+    def test_official_polling_bounds_remote_intervals_and_recovers_from_overflow(self):
+        provider = YouTubeProvider(queue.Queue(), "https://youtu.be/abcdefghijk", "data-key")
+        self.addCleanup(provider.stop)
+        for supplied, expected in (
+            (250, 0.25),
+            (5_000, 5.0),
+            (300_000, 300.0),
+            (10**18, 300.0),
+            (float("inf"), 5.0),
+            (-5, 5.0),
+        ):
+            with self.subTest(interval=supplied):
+                payload = {
+                    "items": [],
+                    "nextPageToken": "next",
+                    "pollingIntervalMillis": supplied,
+                }
+                with (
+                    patch.object(provider, "_get_json", return_value=payload),
+                    patch.object(provider, "wait", return_value=True) as wait,
+                ):
+                    provider._run_official_polling("live-chat-id")
+                wait.assert_called_once_with(expected)
+
     def _provider(self):
         provider = YouTubeProvider(queue.Queue(), "https://youtu.be/abcdefghijk")
         self.addCleanup(provider.stop)
