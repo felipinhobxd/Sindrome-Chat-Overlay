@@ -4,6 +4,8 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.IOException;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -20,6 +22,9 @@ import okhttp3.Response;
 
 public final class NetClient {
     private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
+    // Covers YouTube HTML, JSON replies and third-party emote catalogs.
+    // A compressed or chunked HTTP response is also limited after decompression.
+    private static final int MAX_RESPONSE_BYTES = 8_000_000;
     // One shared connection pool and thread pool for the whole process:
     // each OkHttpClient owns its own executor and keep-alive pool, and the
     // app was creating one per provider, per key validation and one for
@@ -87,7 +92,16 @@ public final class NetClient {
         Call call = client.newCall(request);
         inFlight.add(call);
         try (Response response = call.execute()) {
-            String body = response.body() == null ? "" : response.body().string();
+            String body = "";
+            if (response.body() != null) {
+                byte[] data = BoundedStreams.readBytes(
+                        response.body().byteStream(), response.body().contentLength(),
+                        MAX_RESPONSE_BYTES);
+                MediaType type = response.body().contentType();
+                Charset charset = type == null
+                        ? StandardCharsets.UTF_8 : type.charset(StandardCharsets.UTF_8);
+                body = new String(data, charset);
+            }
             return new ResponseData(response.code(), response.request().url().toString(), body);
         } finally {
             inFlight.remove(call);

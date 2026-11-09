@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 import re
 import sys
@@ -9,6 +10,7 @@ import urllib.request
 from pathlib import Path
 
 OSV_BATCH_URL = "https://api.osv.dev/v1/querybatch"
+_RESOLVED_COORDINATE_RE = re.compile(r"([A-Za-z0-9_.-]+):([A-Za-z0-9_.-]+):([A-Za-z0-9_.+\-]+)")
 _COORDINATE_RE = re.compile(r'"([A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:([A-Za-z0-9_.+\-]+))"')
 _PLUGIN_RE = re.compile(r'id\s+"([^"]+)"\s+version\s+"([^"]+)"')
 _PLUGIN_COORDINATES = {
@@ -34,6 +36,30 @@ def collect_dependencies(root: Path) -> list[tuple[str, str]]:
             dependencies.add((coordinate, version))
 
     return sorted(dependencies)
+
+
+def collect_resolved_dependencies(path: Path) -> list[tuple[str, str]]:
+    """Parse Gradle's selected Maven components (including transitives).
+
+    Fail closed on missing, empty or malformed reports; silently dropping a
+    coordinate could incorrectly make the security audit look successful.
+    """
+    lines = path.read_text(encoding="utf-8").splitlines()
+    resolved: set[tuple[str, str]] = set()
+    for line_number, raw in enumerate(lines, start=1):
+        coordinate = raw.strip()
+        if not coordinate:
+            continue
+        match = _RESOLVED_COORDINATE_RE.fullmatch(coordinate)
+        if match is None or match.group(3).endswith("+"):
+            raise ValueError(
+                f"Malformed resolved Maven coordinate at {path}:{line_number}: {coordinate!r}"
+            )
+        group, artifact, version = match.groups()
+        resolved.add((f"{group}:{artifact}", version))
+    if not resolved:
+        raise ValueError(f"No resolved Maven dependencies found in {path}")
+    return sorted(resolved)
 
 
 def query_osv(dependencies: list[tuple[str, str]], *, attempts: int = 3) -> dict[str, object]:
@@ -72,22 +98,42 @@ def query_osv(dependencies: list[tuple[str, str]], *, attempts: int = 3) -> dict
     raise RuntimeError(f"Unable to query OSV after {attempts} attempts: {last_error}")
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Audit Android Maven declarations and Gradle's resolved runtime graph."
+    )
+    parser.add_argument(
+        "--resolved-file",
+        type=Path,
+        help="Required in CI to audit transitive dependencies selected by Gradle.",
+    )
+    args = parser.parse_args(argv)
     root = Path(__file__).resolve().parents[1]
-    dependencies = collect_dependencies(root)
+    dependencies = set(collect_dependencies(root))
+    if args.resolved_file is not None:
+        try:
+            resolved = collect_resolved_dependencies(args.resolved_file)
+        except (OSError, UnicodeError, ValueError) as exc:
+            print(f"Cannot audit Android transitives: {exc}", file=sys.stderr)
+            return 2
+        dependencies.update(resolved)
+        print(f"Included {len(resolved)} Gradle-resolved Android runtime dependencies.")
+    else:
+        print("Warning: direct dependencies only; use --resolved-file for transitives.")
     if not dependencies:
         print("No Android Maven dependencies found to audit.", file=sys.stderr)
         return 2
 
-    print(f"Auditing {len(dependencies)} Android/Gradle dependencies against OSV...")
-    payload = query_osv(dependencies)
+    requested = sorted(dependencies)
+    print(f"Auditing {len(requested)} Android/Gradle dependencies against OSV...")
+    payload = query_osv(requested)
     results = payload.get("results")
-    if not isinstance(results, list) or len(results) != len(dependencies):
+    if not isinstance(results, list) or len(results) != len(requested):
         print("OSV response did not match the dependency request.", file=sys.stderr)
         return 2
 
     vulnerable: list[tuple[str, str, list[str]]] = []
-    for (name, version), result in zip(dependencies, results, strict=True):
+    for (name, version), result in zip(requested, results, strict=True):
         vulns = result.get("vulns", []) if isinstance(result, dict) else []
         ids = sorted(
             {

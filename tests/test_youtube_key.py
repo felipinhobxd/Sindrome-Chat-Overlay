@@ -42,6 +42,9 @@ class YouTubeApiKeyValidationTests(unittest.TestCase):
         self.assertNotIn(secret, repr(result))
         self.assertEqual(session.call[1]["params"]["part"], "id")
         self.assertEqual(session.call[1]["params"]["fields"], "items/id")
+        self.assertNotIn("key", session.call[1]["params"])
+        self.assertNotIn(secret, session.call[0])
+        self.assertEqual(session.call[1]["headers"]["x-goog-api-key"], secret)
         self.assertEqual(session.call[1]["timeout"], (5, 10))
 
     def test_rejected_key_is_invalid(self) -> None:
