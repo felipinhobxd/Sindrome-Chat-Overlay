@@ -164,6 +164,20 @@ class SettingsStore:
                     values["youtube_api_key"] = _unprotect_secret(encrypted_key)
                 except OSError:
                     values["youtube_api_key"] = ""
+            # Valid strings can still contain invalid channel names or URLs.
+            # Fall back field by field instead of discarding unrelated settings.
+            language = values.get("language", defaults.language)
+            for input_field, enabled_field, normalize in (
+                ("twitch_channel", "twitch_enabled", normalize_twitch_channel),
+                ("youtube_input", "youtube_enabled", normalize_youtube_input),
+            ):
+                candidate = values.get(input_field, getattr(defaults, input_field))
+                enabled = values.get(enabled_field, getattr(defaults, enabled_field))
+                if enabled or candidate.strip():
+                    try:
+                        normalize(candidate, language)
+                    except ValueError:
+                        values.pop(input_field, None)
             return Settings(**values).normalized()
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             return defaults
