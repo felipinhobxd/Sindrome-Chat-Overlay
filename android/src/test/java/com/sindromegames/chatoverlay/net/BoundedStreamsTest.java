@@ -54,6 +54,21 @@ public final class BoundedStreamsTest {
         }
     }
 
+    @Test public void zeroProgressInputStreamDoesNotSpinForever() {
+        InputStream stalled = new InputStream() {
+            @Override public int read() { return 0; }
+            @Override public int read(byte[] target, int offset, int length) {
+                return 0;
+            }
+        };
+        try {
+            BoundedStreams.readBytes(stalled, -1, 32);
+            fail("A non-progressing stream was accepted");
+        } catch (IOException expected) {
+            assertTrue(expected.getMessage().contains("no progress"));
+        }
+    }
+
     @Test public void usesSmallReadsEvenWithHugeUntrustedStreams() throws Exception {
         final int[] consumed = {0};
         InputStream infinite = new InputStream() {
