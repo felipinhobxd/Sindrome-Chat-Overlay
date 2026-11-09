@@ -23,7 +23,8 @@ public final class BoundedStreams {
             int amount = Math.min(chunk.length, maxBytes - total + 1);
             int received = input.read(chunk, 0, amount);
             if (received < 0) break;
-            if (received == 0) continue;
+            if (received == 0)
+                throw new IOException("HTTP stream made no progress");
             total += received;
             if (total > maxBytes)
                 throw new IOException("HTTP response exceeds the size limit");
