@@ -11,4 +11,4 @@ urllib3==2.8.0
 certifi==2026.10.23
 grpcio==1.85.1
 typing-extensions==4.16.0
-protobuf==6.33.6
+protobuf==7.36.2
