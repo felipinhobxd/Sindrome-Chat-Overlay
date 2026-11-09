@@ -306,7 +306,8 @@ class TwitchProvider(BaseProvider):
                     # IRC 001 can precede ROOMSTATE or PRIVMSG. Wait until
                     # the channel room ID is known before loading catalogs.
                     if (
-                        self._third_party is not None
+                        kind == "message"
+                        and self._third_party is not None
                         and self._emote_loader_thread is None
                         and line.startswith("@")
                     ):
