@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from tools.audit_android_dependencies import (
+    collect_dependencies,
     collect_resolved_dependencies,
     main,
 )
@@ -54,7 +55,15 @@ class GradleResolvedAuditTests(unittest.TestCase):
 
             def fake_query(requested):
                 self.assertIn(("com.example:transitive", "1.2.3"), requested)
-                self.assertIn(("com.squareup.okhttp3:okhttp", "4.12.0"), requested)
+                # Compare against the project's declared OkHttp coordinate;
+                # a hard-coded old version would break on every safe upgrade.
+                root = Path(__file__).resolve().parents[1]
+                declared = dict(collect_dependencies(root))
+                self.assertIn("com.squareup.okhttp3:okhttp", declared)
+                self.assertIn(
+                    ("com.squareup.okhttp3:okhttp", declared["com.squareup.okhttp3:okhttp"]),
+                    requested,
+                )
                 return {"results": [{} for _ in requested]}
 
             with patch("tools.audit_android_dependencies.query_osv", side_effect=fake_query):
