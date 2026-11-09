@@ -637,11 +637,16 @@ body {
     }
 
     const ids = [];
+    const seenIds = new Set();
     let idsUsable = true;
     for (const message of messages) {
       const id = String(message.message_id || '');
-      if (!id || ids.includes(id)) { idsUsable = false; break; }
-      ids.push(id);
+      // The same message ID may exist on Twitch and YouTube. Keep the
+      // identity scoped to its provider, as the desktop and server do.
+      const identity = JSON.stringify([String(message.platform || ''), id]);
+      if (!id || seenIds.has(identity)) { idsUsable = false; break; }
+      ids.push(identity);
+      seenIds.add(identity);
     }
     if (!idsUsable) {
       // Rare fallback (missing/duplicate ids): rebuild synchronously.
@@ -664,8 +669,15 @@ body {
       if (same) { chat.scrollTop = chat.scrollHeight; return; }
     }
 
-    // Incremental path: create only new rows, re-append existing ones in
-    // snapshot order (appendChild moves existing nodes), drop removed rows.
+    // Remove stale rows first. When history slides at capacity, the
+    // remaining rows are already in position; only the new row needs DOM
+    // insertion instead of moving every surviving card on each message.
+    for (const [id, node] of nodes) {
+      if (!seenIds.has(id)) {
+        node.remove();
+        nodes.delete(id);
+      }
+    }
     for (let index = 0; index < messages.length; index++) {
       const id = ids[index];
       let node = nodes.get(id);
@@ -673,12 +685,8 @@ body {
         node = messageNode(messages[index], config);
         nodes.set(id, node);
       }
-      if (chat.lastElementChild !== node) chat.appendChild(node);
-    }
-    for (const [id, node] of nodes) {
-      if (!ids.includes(id)) {
-        node.remove();
-        nodes.delete(id);
+      if (chat.children[index] !== node) {
+        chat.insertBefore(node, chat.children[index] || null);
       }
     }
     chat.scrollTop = chat.scrollHeight;
