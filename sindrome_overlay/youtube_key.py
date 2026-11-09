@@ -56,9 +56,13 @@ def validate_youtube_api_key(
                     "part": "id",
                     "id": "dQw4w9WgXcQ",
                     "fields": "items/id",
-                    "key": api_key.strip(),
                 },
-                headers={"User-Agent": "SindromeChatOverlay"},
+                # Keep credentials out of URLs, browser history, proxy access logs and
+                # requests exception messages. Google accepts this API-key header.
+                headers={
+                    "User-Agent": "SindromeChatOverlay",
+                    "x-goog-api-key": api_key.strip(),
+                },
                 timeout=(5, 10),
             )
         except requests.RequestException:
