@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import codecs
 import random
 import re
 import socket
 import ssl
 import threading
+import time
 from datetime import UTC, datetime
 from queue import Queue
 
@@ -16,6 +18,16 @@ from .base import BaseProvider
 from .third_party_emotes import ThirdPartyEmoteResolver
 
 _EMOTE_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+_MAX_IRC_LINE_CHARS = 65_536
+_HEARTBEAT_IDLE_SECONDS = 45.0
+_HEARTBEAT_GRACE_SECONDS = 12.0
+
+
+def _heartbeat_action(now: float, last_inbound: float, heartbeat_sent: float | None) -> int:
+    """0: wait; 1: send PING; 2: reconnect after an unanswered PING."""
+    if heartbeat_sent is not None:
+        return 2 if now - heartbeat_sent >= _HEARTBEAT_GRACE_SECONDS else 0
+    return 1 if now - last_inbound >= _HEARTBEAT_IDLE_SECONDS else 0
 
 
 def decode_irc_tag(value: str) -> str:
@@ -288,7 +300,11 @@ class TwitchProvider(BaseProvider):
             self._send(f"JOIN #{self.channel}")
 
             buffer = ""
+            # A UTF-8 code point may be split across separate socket recv calls.
+            decoder = codecs.getincrementaldecoder("utf-8")("replace")
             announced = False
+            last_inbound = time.monotonic()
+            heartbeat_sent: float | None = None
         except BaseException:
             # TLS handshake / greeting failure happens before the read loop;
             # close both wrappers and the underlying socket in that case.
@@ -303,12 +319,26 @@ class TwitchProvider(BaseProvider):
                 try:
                     chunk = sock.recv(8192)
                 except TimeoutError:
+                    now = time.monotonic()
+                    heartbeat_action = _heartbeat_action(now, last_inbound, heartbeat_sent)
+                    if heartbeat_action == 1:
+                        self._send("PING :sindrome-overlay")
+                        heartbeat_sent = now
+                    elif heartbeat_action == 2:
+                        raise ConnectionError("Twitch heartbeat timed out.")
                     continue
                 if not chunk:
                     raise ConnectionError("Twitch closed the connection.")
-                buffer += chunk.decode("utf-8", "replace")
+                last_inbound = time.monotonic()
+                heartbeat_sent = None
+                buffer += decoder.decode(chunk)
                 lines = buffer.split("\r\n")
                 buffer = lines.pop()
+                # Never let a malformed/unbounded IRC line grow with every recv.
+                if len(buffer) > _MAX_IRC_LINE_CHARS or any(
+                    len(line) > _MAX_IRC_LINE_CHARS for line in lines
+                ):
+                    raise ConnectionError("Twitch IRC line exceeds size limit.")
                 for line in lines:
                     kind, payload = parse_twitch_line(line, self.language)
                     # IRC 001 can precede ROOMSTATE or PRIVMSG. Wait until
