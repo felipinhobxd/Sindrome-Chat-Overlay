@@ -94,6 +94,28 @@ class SettingsStoreTests(unittest.TestCase):
             self.assertEqual(loaded.background_opacity, 35)
             self.assertEqual(loaded.max_messages, 250)
 
+    def test_invalid_channel_strings_preserve_unrelated_settings(self) -> None:
+        for field_name, bad_value in (
+            ("twitch_channel", "https://not-twitch.example/channel"),
+            ("youtube_input", "https://not-youtube.example/live"),
+        ):
+            with self.subTest(field=field_name), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "settings.json"
+                path.write_text(
+                    json.dumps({
+                        field_name: bad_value,
+                        "background_opacity": 42,
+                        "font_size": 21,
+                        "sound_volume": 135,
+                    }),
+                    encoding="utf-8",
+                )
+                loaded = SettingsStore(path).load()
+                self.assertEqual(getattr(loaded, field_name), getattr(Settings(), field_name))
+                self.assertEqual(loaded.background_opacity, 42)
+                self.assertEqual(loaded.font_size, 21)
+                self.assertEqual(loaded.sound_volume, 135)
+
     def test_numeric_strings_remain_compatible_with_old_settings_files(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "settings.json"
