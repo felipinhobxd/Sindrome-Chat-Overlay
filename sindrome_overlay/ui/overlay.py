@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import queue
 import sys
+import threading
 import time
 from collections import deque
 from pathlib import Path
@@ -19,6 +20,7 @@ from PySide6.QtGui import (
     QShowEvent,
 )
 from PySide6.QtWidgets import (
+    QAbstractScrollArea,
     QApplication,
     QFrame,
     QHBoxLayout,
@@ -28,7 +30,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressDialog,
     QPushButton,
-    QScrollArea,
     QSizeGrip,
     QSystemTrayIcon,
     QVBoxLayout,
@@ -37,10 +38,12 @@ from PySide6.QtWidgets import (
 
 from .. import __version__
 from ..events import ProviderEvent
+from ..filters import should_display
 from ..i18n import tr
 from ..models import ChatMessage
 from ..providers import TwitchProvider, YouTubeProvider
 from ..providers.base import BaseProvider
+from ..provider_event_queue import ProviderEventQueue
 from ..settings import Settings, SettingsStore
 from ..sounds import NotificationSoundPlayer
 from ..updates import (
@@ -49,10 +52,8 @@ from ..updates import (
     UpdateDownloader,
     UpdateDownloadResult,
     UpdateInfo,
-    sha256_matches,
 )
 from ..win32 import WindowsGlobalHotkey, WindowsOverlayController, native_message_values
-from .message_card import MessageCard
 from .settings_dialog import SettingsDialog
 from .theme import build_stylesheet
 from .twitch_assets import TwitchAssetCache
@@ -88,7 +89,17 @@ class DragHeader(QFrame):
         super().mouseReleaseEvent(event)
 
 
-class OverlayWindow(QMainWindow):
+class OverlayShell(QMainWindow):
+    """Window chrome and lifecycle shared by every overlay implementation.
+
+    The shell owns the header, statuses, tray, hotkeys, click-through,
+    providers, the update flow, the settings pipeline and the message
+    bookkeeping (dedup, trimming, expiry, sounds). How messages are actually
+    rendered is delegated to four hooks that subclasses must implement:
+    ``_build_message_area``, ``_append_card``, ``_detach_message`` and
+    ``_replace_feed``. Subclasses never tear down widgets built by the shell.
+    """
+
     def __init__(
         self,
         settings: Settings,
@@ -104,11 +115,10 @@ class OverlayWindow(QMainWindow):
             fallback_beep=QApplication.beep,
         )
         self.twitch_assets = TwitchAssetCache(logger, self)
-        self.events: queue.Queue[ProviderEvent] = queue.Queue()
+        self.events: queue.Queue[ProviderEvent] = ProviderEventQueue()
         self.providers: list[BaseProvider] = []
         self.messages: list[ChatMessage] = []
-        self.cards: list[MessageCard] = []
-        self.cards_by_id: dict[str, MessageCard] = {}
+        self._created_monotonic: list[float] = []
         self.seen_ids: set[str] = set()
         self.seen_order: deque[str] = deque(maxlen=5_000)
         self.status_labels: dict[str, QLabel] = {}
@@ -141,6 +151,10 @@ class OverlayWindow(QMainWindow):
         icon = QIcon(str(icon_path))
         self.setWindowIcon(icon)
 
+        # Set by the subclass as soon as its scroll area exists; the eventFilter
+        # may fire during widget construction (synchronous layout events on
+        # Windows), long before the legacy `self.scroll` alias is assigned.
+        self._message_scroll: QAbstractScrollArea | None = None
         self._build_ui()
         self._build_tray(icon)
         self._retranslate_ui(reset_statuses=True)
@@ -172,6 +186,23 @@ class OverlayWindow(QMainWindow):
 
         self._restart_providers()
         QTimer.singleShot(150, lambda: self.set_click_through(self.settings.click_through))
+
+    # --- Message-rendering hooks (implemented by concrete overlays) --------
+
+    def _build_message_area(self, layout: QVBoxLayout) -> None:
+        raise NotImplementedError
+
+    def _append_card(self, message: ChatMessage) -> None:
+        raise NotImplementedError
+
+    def _detach_message(self, index: int) -> None:
+        raise NotImplementedError
+
+    def _replace_feed(self, messages: list[ChatMessage]) -> None:
+        raise NotImplementedError
+
+    def _update_empty_state(self) -> None:
+        raise NotImplementedError
 
     def _register_global_hotkey(self) -> None:
         if self._shutting_down:
@@ -351,7 +382,10 @@ class OverlayWindow(QMainWindow):
 
     def _show_install_prompt(self, result: UpdateDownloadResult) -> None:
         installer_path = result.installer_path
-        if installer_path is None or not sha256_matches(installer_path, result.sha256):
+        # The worker thread hash-verified these exact bytes right before
+        # publishing the result; re-hashing here would freeze the UI reading
+        # up to 250 MB from disk.
+        if installer_path is None or not result.verified:
             self._show_update_failure(
                 UpdateDownloadResult(
                     status="error",
@@ -372,7 +406,10 @@ class OverlayWindow(QMainWindow):
         prompt.exec()
         if prompt.clickedButton() is not install_button:
             return
-        if not sha256_matches(installer_path, result.sha256):
+        # Cheap change detection before launch: the download was
+        # hash-verified in the worker, so a size/mtime mismatch means the
+        # file was touched after the verified snapshot and must not launch.
+        if not self._installer_unchanged_since_download(installer_path, result):
             self._show_update_failure(
                 UpdateDownloadResult(
                     status="error",
@@ -396,6 +433,17 @@ class OverlayWindow(QMainWindow):
             )
             return
         QTimer.singleShot(0, self.close)
+
+    @staticmethod
+    def _installer_unchanged_since_download(installer_path, result: UpdateDownloadResult) -> bool:
+        try:
+            stat = installer_path.stat()
+        except OSError:
+            return False
+        return (
+            stat.st_size == result.file_size
+            and stat.st_mtime_ns == result.file_mtime_ns
+        )
 
     def _show_update_failure(self, result: UpdateDownloadResult) -> None:
         error_keys = {
@@ -521,24 +569,8 @@ class OverlayWindow(QMainWindow):
         header_layout.addWidget(self.close_button)
         layout.addWidget(self.header)
 
-        self.scroll = QScrollArea()
-        self.scroll.setWidgetResizable(True)
-        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.scroll.viewport().installEventFilter(self)
-        self.message_host = QWidget()
-        self.message_layout = QVBoxLayout(self.message_host)
-        self.message_layout.setContentsMargins(5, 4, 5, 5)
-        self.message_layout.setSpacing(3)
-
-        self.empty_state = QLabel()
-        self.empty_state.setObjectName("EmptyState")
-        self.empty_state.setAlignment(Qt.AlignCenter)
-        self.empty_state.setWordWrap(True)
-        self.message_layout.addWidget(self.empty_state)
-        self.message_layout.addStretch(1)
-        self.scroll.setWidget(self.message_host)
-        self.scroll.verticalScrollBar().rangeChanged.connect(self._on_scroll_range_changed)
-        layout.addWidget(self.scroll, 1)
+        # The concrete overlay inserts its message feed here (stretched).
+        self._build_message_area(layout)
 
         grip_row = QHBoxLayout()
         grip_row.setContentsMargins(0, 0, 3, 3)
@@ -643,13 +675,14 @@ class OverlayWindow(QMainWindow):
     def _restart_providers(self) -> None:
         self._stop_providers()
         # Old workers keep their old queue, so late shutdown events cannot overwrite new status.
-        self.events = queue.Queue()
+        self.events = ProviderEventQueue()
 
         if self.settings.twitch_enabled:
-            provider = TwitchProvider(
+            provider: TwitchProvider | YouTubeProvider = TwitchProvider(
                 self.events,
                 self.settings.twitch_channel,
                 self.settings.language,
+                third_party_emotes=self.settings.third_party_emotes,
             )
             self.providers.append(provider)
             provider.start()
@@ -679,11 +712,30 @@ class OverlayWindow(QMainWindow):
         self.providers.clear()
         for provider in old_providers:
             provider.stop()
-        for provider in old_providers:
+        # A control-only backlog can block producers waiting for space.
+        # Release them before abandoning this queue during restart/shutdown.
+        if isinstance(self.events, ProviderEventQueue):
+            self.events.close()
+        if old_providers:
+            # join() can block for seconds on a provider stuck in a network
+            # read; reap them on a daemon thread instead of freezing the UI.
+            # Old workers keep their old queue, so any late events they emit
+            # go to a queue nobody reads and cannot corrupt the new state.
+            threading.Thread(
+                target=self._reap_providers,
+                args=(old_providers,),
+                name="sindrome-provider-reaper",
+                daemon=True,
+            ).start()
+
+    @staticmethod
+    def _reap_providers(providers: list[BaseProvider]) -> None:
+        for provider in providers:
+            provider.join(timeout=5.0)
             if provider.is_alive():
-                provider.join(timeout=1.0)
-                if provider.is_alive():
-                    self.log.warning("%s provider did not stop within one second.", provider.platform)
+                logging.getLogger("sindrome_overlay.overlay").warning(
+                    "%s provider did not stop within five seconds.", provider.platform
+                )
 
     def _drain_events(self) -> None:
         for _ in range(100):
@@ -699,11 +751,13 @@ class OverlayWindow(QMainWindow):
                 self._set_status(event.platform, event.state, event.text)
             elif event.kind == "delete" and event.message_id:
                 self._remove_message_id(event.message_id)
+            elif event.kind == "delete_author" and event.author_id:
+                self._remove_author_id(event.author_id)
             elif event.kind == "clear":
                 self.clear_messages(event.platform)
 
     def add_message(self, message: ChatMessage) -> None:
-        if self.settings.hide_commands and message.text.lstrip().startswith("!"):
+        if not should_display(message, self.settings):
             return
         if message.message_id and message.message_id in self.seen_ids:
             return
@@ -714,38 +768,98 @@ class OverlayWindow(QMainWindow):
             self.seen_order.append(message.message_id)
             self.seen_ids.add(message.message_id)
         self.messages.append(message)
+        self._created_monotonic.append(time.monotonic())
         self._append_card(message)
         self._trim_messages()
-        self._play_message_sound(message.platform)
+        self._play_message_sound(message.platform, message)
 
-    def _append_card(self, message: ChatMessage) -> None:
-        self.empty_state.hide()
-        card = MessageCard(
-            message,
-            self.settings,
-            self.twitch_assets,
-            self.message_host,
-        )
-        self.cards.append(card)
-        if message.message_id:
-            self.cards_by_id[message.message_id] = card
-        self.message_layout.insertWidget(self.message_layout.count() - 1, card)
-        if self.settings.auto_scroll:
-            QTimer.singleShot(0, self._scroll_to_bottom)
-            # Word wrapping may change the scroll range after the first layout pass.
-            QTimer.singleShot(75, self._scroll_to_bottom)
-
-    def _scroll_to_bottom(self) -> None:
-        if not self.settings.auto_scroll:
+    def remove_at(self, index: int) -> None:
+        """Drop one message: view-side detach first, then shell bookkeeping."""
+        if index < 0 or index >= len(self.messages):
             return
-        bar = self.scroll.verticalScrollBar()
-        bar.setValue(bar.maximum())
+        self._detach_message(index)
+        self.messages.pop(index)
+        self._created_monotonic.pop(index)
+        self._update_empty_state()
 
-    def _on_scroll_range_changed(self, _minimum: int, maximum: int) -> None:
-        if self.settings.auto_scroll:
-            self.scroll.verticalScrollBar().setValue(maximum)
+    def _trim_messages(self) -> None:
+        while len(self.messages) > self.settings.max_messages:
+            self.remove_at(0)
 
-    def _play_message_sound(self, platform: str) -> None:
+    def _expire_messages(self) -> None:
+        lifetime = self.settings.message_lifetime_seconds
+        if lifetime <= 0:
+            return
+        now = time.monotonic()
+        while self._created_monotonic and now - self._created_monotonic[0] >= lifetime:
+            self.remove_at(0)
+
+    def _remove_message_id(self, message_id: str) -> None:
+        for index, message in enumerate(self.messages):
+            if message.message_id == message_id:
+                self.remove_at(index)
+                return
+
+    def _remove_author_id(self, author_id: str) -> None:
+        # Ban/timeout: remove every surviving message from that account.
+        for index in range(len(self.messages) - 1, -1, -1):
+            if self.messages[index].author_id == author_id:
+                self.remove_at(index)
+
+    def clear_messages(self, platform: str = "") -> None:
+        self._clear_feed(platform)
+        if not platform:
+            self.messages.clear()
+            self._created_monotonic.clear()
+            self._update_empty_state()
+            return
+        for index in range(len(self.messages) - 1, -1, -1):
+            if self.messages[index].platform == platform:
+                self.remove_at(index)
+
+    def _clear_feed(self, platform: str) -> None:
+        raise NotImplementedError
+
+    def _rebuild_cards(self) -> None:
+        filtered = [
+            message
+            for message in self.messages[-self.settings.max_messages :]
+            if should_display(message, self.settings)
+        ]
+        # Both current feeds re-stamp creation times when the feed is rebuilt,
+        # so resetting the shell clock keeps expiry behaviour unchanged.
+        now = time.monotonic()
+        self.messages[:] = filtered
+        self._created_monotonic[:] = [now] * len(filtered)
+        self._replace_feed(filtered)
+        self._update_empty_state()
+
+    def _play_message_sound(self, platform: str, message: ChatMessage | None = None) -> None:
+        # High-value events must always be audible and get their own presets so
+        # they stand out from the regular per-platform chat sound.
+        kind = message.kind if message is not None else "message"
+        if kind in {"paid", "bits"}:
+            self.notification_sounds.play(
+                "bell",
+                enabled=self.settings.sound_enabled,
+                volume=self.settings.sound_volume,
+                twitch_sound="bell",
+                youtube_sound="bell",
+                min_interval_ms=0,
+                bypass_limit=True,
+            )
+            return
+        if kind == "membership":
+            self.notification_sounds.play(
+                "chime",
+                enabled=self.settings.sound_enabled,
+                volume=self.settings.sound_volume,
+                twitch_sound="chime",
+                youtube_sound="chime",
+                min_interval_ms=0,
+                bypass_limit=True,
+            )
+            return
         self.notification_sounds.play(
             platform,
             enabled=self.settings.sound_enabled,
@@ -754,63 +868,6 @@ class OverlayWindow(QMainWindow):
             youtube_sound=self.settings.youtube_sound,
             min_interval_ms=self.settings.sound_min_interval_ms,
         )
-
-    def _trim_messages(self) -> None:
-        while len(self.messages) > self.settings.max_messages:
-            self._remove_at(0)
-
-    def _expire_messages(self) -> None:
-        lifetime = self.settings.message_lifetime_seconds
-        if lifetime <= 0:
-            return
-        now = time.monotonic()
-        while self.cards and now - self.cards[0].created_monotonic >= lifetime:
-            self._remove_at(0)
-
-    def _remove_message_id(self, message_id: str) -> None:
-        card = self.cards_by_id.get(message_id)
-        if card is None:
-            return
-        try:
-            index = self.cards.index(card)
-        except ValueError:
-            return
-        self._remove_at(index)
-
-    def _remove_at(self, index: int) -> None:
-        if index < 0 or index >= len(self.cards):
-            return
-        card = self.cards.pop(index)
-        message = self.messages.pop(index)
-        if message.message_id:
-            self.cards_by_id.pop(message.message_id, None)
-        self.message_layout.removeWidget(card)
-        card.deleteLater()
-        self.empty_state.setVisible(not self.cards)
-
-    def clear_messages(self, platform: str = "") -> None:
-        if not platform:
-            while self.cards:
-                self._remove_at(len(self.cards) - 1)
-            return
-        for index in range(len(self.messages) - 1, -1, -1):
-            if self.messages[index].platform == platform:
-                self._remove_at(index)
-
-    def _rebuild_cards(self) -> None:
-        history = list(self.messages)
-        while self.cards:
-            card = self.cards.pop()
-            self.message_layout.removeWidget(card)
-            card.deleteLater()
-        self.cards_by_id.clear()
-        self.messages = []
-        for message in history[-self.settings.max_messages :]:
-            if self.settings.hide_commands and message.text.lstrip().startswith("!"):
-                continue
-            self.messages.append(message)
-            self._append_card(message)
-        self.empty_state.setVisible(not self.cards)
 
     def _set_status(self, platform: str, state: str, text: str) -> None:
         label = self.status_labels.get(platform)
@@ -832,22 +889,51 @@ class OverlayWindow(QMainWindow):
     def open_settings(self) -> None:
         if self.settings.click_through:
             self.set_click_through(False)
-        dialog = SettingsDialog(
+        self._before_settings_dialog()
+        dialog_cls = self._settings_dialog_class()
+        dialog = dialog_cls(
             self.settings,
             self,
             youtube_connection_mode=self.youtube_connection_mode,
+            **self._settings_dialog_extras(),
         )
+        self._connect_settings_dialog(dialog)
         dialog.setStyleSheet(build_stylesheet(self.settings))
         if dialog.exec() != SettingsDialog.Accepted:
             return
         self._remember_geometry()
         updated = dialog.settings()
+        self._apply_settings(updated)
+
+    # --- Settings-flow hooks (overridden by the concrete overlay) ----------
+
+    def _settings_dialog_class(self) -> type[SettingsDialog]:
+        """Dialog class instantiated by open_settings; subclasses may swap it."""
+        return SettingsDialog
+
+    def _before_settings_dialog(self) -> None:
+        return
+
+    def _settings_dialog_extras(self) -> dict:
+        return {}
+
+    def _connect_settings_dialog(self, dialog: SettingsDialog) -> None:
+        return
+
+    def _apply_settings(self, updated: Settings) -> None:
+        """Single accepted-settings pipeline shared by both overlays."""
+        # _remember_geometry stored the current window geometry on
+        # self.settings right before this call; both overlays want the dialog
+        # result combined with that geometry.
         updated.window_x = self.settings.window_x
         updated.window_y = self.settings.window_y
         updated.window_width = self.settings.window_width
         updated.window_height = self.settings.window_height
         self.settings = updated
-        self.store.save(self.settings)
+        try:
+            self.store.save(self._settings_for_save())
+        except (OSError, ValueError) as exc:
+            self.log.warning("Unable to save settings: %s", exc)
         self.notification_sounds.reset_limit()
         if not self.settings.check_for_updates:
             self._stop_update_checker()
@@ -859,6 +945,13 @@ class OverlayWindow(QMainWindow):
         self._rebuild_cards()
         self._restart_providers()
         self.set_click_through(self.settings.click_through)
+        self._settings_applied()
+
+    def _settings_for_save(self) -> Settings:
+        return self.settings
+
+    def _settings_applied(self) -> None:
+        return
 
     def _settings_from_tray(self) -> None:
         if not self.isVisible():
@@ -903,7 +996,7 @@ class OverlayWindow(QMainWindow):
         self._set_native_click_through(enabled)
         try:
             self._remember_geometry()
-            self.store.save(self.settings)
+            self.store.save(self._settings_for_save())
         except OSError as exc:
             self.log.warning("Unable to save lock state: %s", exc)
         if enabled and self.tray and self._first_lock_notice:
@@ -941,7 +1034,12 @@ class OverlayWindow(QMainWindow):
                 self.activateWindow()
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
-        if watched is self.scroll.viewport() and event.type() == QEvent.MouseButtonDblClick:
+        scroll_area = self._message_scroll
+        if (
+            scroll_area is not None
+            and watched is scroll_area.viewport()
+            and event.type() == QEvent.MouseButtonDblClick
+        ):
             self.toggle_click_through()
             return True
         return super().eventFilter(watched, event)
@@ -960,11 +1058,11 @@ class OverlayWindow(QMainWindow):
             self._fallback_shortcut.setEnabled(False)
         self._remember_geometry()
         try:
-            self.store.save(self.settings)
+            self.store.save(self._settings_for_save())
         except OSError as exc:
             self.log.warning("Unable to save settings on close: %s", exc)
         self._stop_providers()
-        self.events = queue.Queue()
+        self.events = ProviderEventQueue()
         if self.tray:
             self.tray.hide()
         event.accept()

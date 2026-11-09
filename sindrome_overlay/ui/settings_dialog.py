@@ -3,7 +3,7 @@ from __future__ import annotations
 import queue
 from dataclasses import replace
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..card_themes import CARD_THEME_ORDER
 from ..i18n import LANGUAGE_LABELS, SUPPORTED_LANGUAGES, tr
 from ..settings import Settings
 from ..sounds import NotificationSoundPlayer, SOUND_PRESETS
@@ -33,6 +34,11 @@ from ..youtube_key import YouTubeKeyValidationResult, YouTubeKeyValidator
 
 
 class SettingsDialog(QDialog):
+    # Declared on the base so both the stock dialog and the feature dialog
+    # (which extends this class) expose the same hook surface; the stock dialog
+    # simply never emits it.
+    diagnostics_requested = Signal()
+
     def __init__(
         self,
         current: Settings,
@@ -219,9 +225,21 @@ class SettingsDialog(QDialog):
         self.show_platform.setChecked(self._current.show_platform_labels)
         self.hide_commands = QCheckBox(self._text("hide_commands"))
         self.hide_commands.setChecked(self._current.hide_commands)
+        self.third_party_emotes = QCheckBox(self._text("third_party_emotes"))
+        self.third_party_emotes.setChecked(self._current.third_party_emotes)
+        self.hidden_users = QLineEdit(self._current.hidden_users)
+        self.hidden_users.setPlaceholderText(self._text("hidden_users"))
+        self.hidden_words = QLineEdit(self._current.hidden_words)
+        self.hidden_words.setPlaceholderText(self._text("hidden_words"))
 
         self.background_opacity, background_row = self._slider_row(self._current.background_opacity)
         self.card_opacity, card_row = self._slider_row(self._current.card_opacity)
+
+        self.card_theme = QComboBox()
+        for theme_key in CARD_THEME_ORDER:
+            self.card_theme.addItem(self._text(f"card_theme_{theme_key}"), theme_key)
+        theme_index = self.card_theme.findData(self._current.card_theme)
+        self.card_theme.setCurrentIndex(max(0, theme_index))
 
         self.font_size = QSpinBox()
         self.font_size.setRange(11, 30)
@@ -244,12 +262,16 @@ class SettingsDialog(QDialog):
         form.addRow(self.check_for_updates)
         form.addRow(self._text("panel_opacity"), background_row)
         form.addRow(self._text("message_opacity"), card_row)
+        form.addRow(self._text("card_theme"), self.card_theme)
         form.addRow(self._text("font_size"), self.font_size)
         form.addRow(self._text("max_messages"), self.max_messages)
         form.addRow(self._text("remove_after"), self.lifetime)
         form.addRow(self.show_timestamps)
         form.addRow(self.show_platform)
         form.addRow(self.hide_commands)
+        form.addRow(self.third_party_emotes)
+        form.addRow(self._text("hidden_users"), self.hidden_users)
+        form.addRow(self._text("hidden_words"), self.hidden_words)
         return tab
 
     def _sound_tab(self) -> QWidget:
@@ -381,6 +403,7 @@ class SettingsDialog(QDialog):
             click_through=self.click_through.isChecked(),
             background_opacity=self.background_opacity.value(),
             card_opacity=self.card_opacity.value(),
+            card_theme=str(self.card_theme.currentData() or ""),
             font_size=self.font_size.value(),
             max_messages=self.max_messages.value(),
             message_lifetime_seconds=self.lifetime.value(),
@@ -394,6 +417,9 @@ class SettingsDialog(QDialog):
             show_timestamps=self.show_timestamps.isChecked(),
             show_platform_labels=self.show_platform.isChecked(),
             hide_commands=self.hide_commands.isChecked(),
+            third_party_emotes=self.third_party_emotes.isChecked(),
+            hidden_users=self.hidden_users.text().strip(),
+            hidden_words=self.hidden_words.text().strip(),
             window_x=self._current.window_x,
             window_y=self._current.window_y,
             window_width=self._current.window_width,
@@ -419,12 +445,16 @@ class SettingsDialog(QDialog):
         self.check_for_updates.setChecked(defaults.check_for_updates)
         self.background_opacity.setValue(defaults.background_opacity)
         self.card_opacity.setValue(defaults.card_opacity)
+        self.card_theme.setCurrentIndex(self.card_theme.findData(defaults.card_theme))
         self.font_size.setValue(defaults.font_size)
         self.max_messages.setValue(defaults.max_messages)
         self.lifetime.setValue(defaults.message_lifetime_seconds)
         self.show_timestamps.setChecked(defaults.show_timestamps)
         self.show_platform.setChecked(defaults.show_platform_labels)
         self.hide_commands.setChecked(defaults.hide_commands)
+        self.third_party_emotes.setChecked(defaults.third_party_emotes)
+        self.hidden_users.setText(defaults.hidden_users)
+        self.hidden_words.setText(defaults.hidden_words)
 
     def _toggle_youtube_advanced(self, expanded: bool) -> None:
         self.youtube_advanced_panel.setVisible(expanded)

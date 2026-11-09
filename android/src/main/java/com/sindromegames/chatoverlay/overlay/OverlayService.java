@@ -80,9 +80,22 @@ public final class OverlayService extends Service {
             return START_STICKY;
         } catch (RuntimeException failure) {
             Log.e(TAG, "Unhandled overlay service action: " + action, failure);
-            ChatBus.updateRunning(false);
+            ChatBus.updateStopped();
             refreshNotification();
             return START_NOT_STICKY;
+        }
+    }
+
+    @Override public void onConfigurationChanged(android.content.res.Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        // Rotation changes the display bounds; without a re-clamp the overlay
+        // can stay partially off-screen until the next settings refresh.
+        if (overlay != null) {
+            try {
+                overlay.refreshSettings();
+            } catch (RuntimeException failure) {
+                Log.w(TAG, "Unable to re-clamp overlay after rotation", failure);
+            }
         }
     }
 

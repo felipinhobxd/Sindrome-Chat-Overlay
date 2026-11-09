@@ -18,6 +18,9 @@ public final class AppSettings {
     public boolean showTimestamps = true;
     public boolean showPlatform = true;
     public boolean hideCommands = false;
+    public boolean thirdPartyEmotes = true;
+    public String hiddenUsers = "";
+    public String hiddenWords = "";
     public boolean soundEnabled = true;
     public int soundVolume = 100;
     public String twitchSound = "pop";
@@ -45,6 +48,9 @@ public final class AppSettings {
         value.showTimestamps = p.getBoolean("show_timestamps", value.showTimestamps);
         value.showPlatform = p.getBoolean("show_platform", value.showPlatform);
         value.hideCommands = p.getBoolean("hide_commands", value.hideCommands);
+        value.thirdPartyEmotes = p.getBoolean("third_party_emotes", value.thirdPartyEmotes);
+        value.hiddenUsers = p.getString("hidden_users", value.hiddenUsers);
+        value.hiddenWords = p.getString("hidden_words", value.hiddenWords);
         value.soundEnabled = p.getBoolean("sound_enabled", value.soundEnabled);
         value.soundVolume = clamp(p.getInt("sound_volume", value.soundVolume), 0, 200);
         value.twitchSound = normalizeSound(p.getString("twitch_sound", value.twitchSound), "pop");
@@ -73,6 +79,9 @@ public final class AppSettings {
                 .putBoolean("show_timestamps", showTimestamps)
                 .putBoolean("show_platform", showPlatform)
                 .putBoolean("hide_commands", hideCommands)
+                .putBoolean("third_party_emotes", thirdPartyEmotes)
+                .putString("hidden_users", hiddenUsers == null ? "" : hiddenUsers.trim())
+                .putString("hidden_words", hiddenWords == null ? "" : hiddenWords.trim())
                 .putBoolean("sound_enabled", soundEnabled)
                 .putInt("sound_volume", clamp(soundVolume, 0, 200))
                 .putString("twitch_sound", normalizeSound(twitchSound, "pop"))

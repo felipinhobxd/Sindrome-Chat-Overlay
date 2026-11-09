@@ -39,8 +39,10 @@ public final class YouTubeKeyValidator {
             Map<String, String> parameters = new LinkedHashMap<>();
             parameters.put("part", "id");
             parameters.put("id", "dQw4w9WgXcQ");
-            parameters.put("key", key);
-            net.getJson("https://www.googleapis.com/youtube/v3/videos", parameters);
+            // Header instead of the "key" query parameter: keys in URLs leak
+            // into proxy and CDN logs.
+            net.getJson("https://www.googleapis.com/youtube/v3/videos", parameters,
+                    Map.of("X-goog-api-key", key));
             return Result.VALID;
         } catch (NetClient.HttpFailure failure) {
             String reason = reason(failure.responseBody).toLowerCase(Locale.ROOT);

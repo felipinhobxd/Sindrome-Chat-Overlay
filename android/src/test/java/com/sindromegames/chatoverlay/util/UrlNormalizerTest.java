@@ -17,8 +17,11 @@ public final class UrlNormalizerTest {
                 UrlNormalizer.youtubeInput("@SindromeGames"));
         assertEquals("https://www.youtube.com/watch?v=dQw4w9WgXcQ",
                 UrlNormalizer.youtubeInput("https://youtu.be/dQw4w9WgXcQ"));
+        assertEquals("https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                UrlNormalizer.youtubeInput("https://www.youtube.com/live/dQw4w9WgXcQ?si=share"));
+        assertEquals("https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                UrlNormalizer.youtubeInput("https://m.youtube.com/watch?v=dQw4w9WgXcQ&feature=share"));
         assertEquals("dQw4w9WgXcQ", UrlNormalizer.youtubeVideoId(
                 "https://www.youtube.com/watch?v=dQw4w9WgXcQ"));
     }
 }
-

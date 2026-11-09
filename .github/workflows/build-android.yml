@@ -33,19 +33,22 @@ jobs:
           persist-credentials: false
 
       - name: Set up Java
-        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: temurin
           java-version: "17"
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          # The legacy SDK 'tools' package was removed from Google's repository.
+          packages: platform-tools
 
       - name: Install Android SDK packages
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
         with:
           gradle-version: "8.10.2"
           cache-provider: basic
@@ -70,8 +73,21 @@ jobs:
       - name: Build installable debug APK
         run: gradle :android:assembleDebug --stacktrace
 
+      # Keep the release gate independent of other parallel workflows:
+      # a vulnerable transitive Android runtime dependency blocks signing.
+      - name: Set up Python for dependency audit
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Resolve Android runtime Maven graph
+        run: gradle -I tools/export_android_runtime_dependencies.gradle :android:exportResolvedRuntimeModules --stacktrace
+
+      - name: Audit Android runtime and transitive dependencies
+        run: python tools/audit_android_dependencies.py --resolved-file build/android-resolved-maven.txt
+
       - name: Upload tested debug APK
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: SindromeChatOverlay-Android-debug-v${{ env.VERSION }}
           path: android/build/outputs/apk/debug/android-debug.apk
@@ -143,18 +159,91 @@ jobs:
 
       - name: Upload signed Android artifact
         if: steps.signing.outputs.configured == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: SindromeChatOverlay-Android-v${{ env.VERSION }}
           path: |
             SindromeChatOverlay-Android-v${{ env.VERSION }}.apk
             SHA256SUMS-Android.txt
 
+  instrumented-tests:
+    # Do not run default-branch emulator tests for unrelated workflow_run events.
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Java
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          # The legacy SDK 'tools' package was removed from Google's repository.
+          packages: 'platform-tools emulator'
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        with:
+          gradle-version: "8.10.2"
+          cache-provider: basic
+
+      - name: Enable KVM group perms
+        # Hosted runners ship /dev/kvm with root:kvm ownership, but the
+        # runner user is not in the kvm group; without this rule QEMU
+        # silently falls back to software emulation and the emulator never
+        # boots (adb reports "device offline" until the boot timeout).
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -al /dev/kvm
+
+      - name: Run instrumented tests on an emulator
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.34.0
+        with:
+          api-level: 30
+          # google_apis is the battle-tested CI image; the AOSP "default"
+          # image for API 30 hangs its shell on hosted runners and the run
+          # dies with ShellCommandUnresponsiveException before any test.
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-boot-timeout: 600
+          script: |
+            adb shell appops set com.sindromegames.chatoverlay SYSTEM_ALERT_WINDOW allow || true
+            gradle :android:connectedDebugAndroidTest --stacktrace
+
+      - name: Upload instrumented test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: android-instrumented-test-reports
+          path: |
+            android/build/reports/androidTests/
+            android/build/outputs/androidTest-results/
+          if-no-files-found: ignore
+
   publish-android:
-    needs: build-android
+    # Never publish an APK unless both local and emulator test gates passed.
+    needs: [build-android, instrumented-tests]
     if: >-
       github.event_name != 'pull_request' &&
       needs.build-android.result == 'success' &&
+      needs.instrumented-tests.result == 'success' &&
       needs.build-android.outputs.publish == 'true' &&
       needs.build-android.outputs.signing_configured == 'true'
     runs-on: ubuntu-latest
@@ -162,13 +251,13 @@ jobs:
       contents: write
     steps:
       - name: Download signed Android artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: SindromeChatOverlay-Android-v${{ needs.build-android.outputs.version }}
           path: release-android
 
       - name: Attach signed APK to GitHub Release
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           tag_name: ${{ needs.build-android.outputs.release_tag }}
           name: Sindrome Chat Overlay ${{ needs.build-android.outputs.release_tag }}

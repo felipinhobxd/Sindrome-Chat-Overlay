@@ -4,6 +4,7 @@ import random
 import re
 import socket
 import ssl
+import threading
 from datetime import UTC, datetime
 from queue import Queue
 
@@ -12,6 +13,7 @@ from ..i18n import normalize_language, tr
 from ..models import ChatBadge, ChatEmote, ChatMessage
 from ..url_utils import normalize_twitch_channel
 from .base import BaseProvider
+from .third_party_emotes import ThirdPartyEmoteResolver
 
 _EMOTE_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
@@ -186,10 +188,12 @@ def parse_twitch_line(line: str, language: str = "en") -> tuple[str, ChatMessage
         return "delete", tags.get("target-msg-id", "")
     if " CLEARCHAT " in rest:
         clear_target = rest.split(" CLEARCHAT ", 1)[1]
-        # A trailing user means only that user's history was removed. Without
-        # author IDs on older cards, leaving those cards alone is safer than
-        # erasing the entire overlay.
-        return ("other", None) if " :" in clear_target else ("clear", None)
+        if " :" in clear_target:
+            # Ban/timeout for one user: the platform supplies the numeric user
+            # id in the tags, which matches the author_id stored on messages.
+            target_id = tags.get("target-user-id", "")
+            return "delete_author", target_id or clear_target.rsplit(" :", 1)[-1].strip()
+        return "clear", None
     if " NOTICE " in rest:
         return "notice", rest.rsplit(" :", 1)[-1]
     if rest.startswith("PING"):
@@ -197,21 +201,35 @@ def parse_twitch_line(line: str, language: str = "en") -> tuple[str, ChatMessage
     if " RECONNECT" in rest:
         return "reconnect", None
     if " 001 " in rest or " ROOMSTATE " in rest:
-        return "ready", None
+        room_id = tags.get("room-id", "")
+        return ("ready", room_id) if room_id else ("ready", None)
     return "other", None
 
 
 class TwitchProvider(BaseProvider):
     platform = "twitch"
 
-    def __init__(self, events: Queue[ProviderEvent], channel: str, language: str = "en") -> None:
+    def __init__(
+        self,
+        events: Queue[ProviderEvent],
+        channel: str,
+        language: str = "en",
+        third_party_emotes: bool = True,
+    ) -> None:
         super().__init__(events)
         self.language = normalize_language(language)
         self.channel = normalize_twitch_channel(channel, self.language)
         self._socket: ssl.SSLSocket | None = None
+        self._room_id = ""
+        self._emote_loader_thread: threading.Thread | None = None
+        self._third_party: ThirdPartyEmoteResolver | None = (
+            ThirdPartyEmoteResolver() if third_party_emotes else None
+        )
 
     def stop(self) -> None:
         super().stop()
+        if self._third_party is not None:
+            self._third_party.stop()
         sock = self._socket
         if sock is not None:
             try:
@@ -280,14 +298,21 @@ class TwitchProvider(BaseProvider):
                         if not announced:
                             self.emit_status("connected", tr(self.language, "live"))
                             announced = True
+                        if self._third_party is not None:
+                            payload = self._third_party.augment(payload)
                         self.emit_message(payload)
                     elif kind == "delete" and isinstance(payload, str):
                         self.emit_delete(payload)
+                    elif kind == "delete_author" and isinstance(payload, str):
+                        self.emit_delete_author(payload)
                     elif kind == "clear":
                         self.emit_clear()
                     elif kind == "ready" and not announced:
                         self.emit_status("connected", tr(self.language, "connected"))
                         announced = True
+                        self._ensure_third_party_emotes(
+                            payload if isinstance(payload, str) else ""
+                        )
                     elif kind == "notice" and isinstance(payload, str):
                         if "authentication failed" in payload.lower():
                             raise PermissionError(payload)
@@ -300,6 +325,20 @@ class TwitchProvider(BaseProvider):
                 sock.close()
             except OSError:
                 pass
+
+    def _ensure_third_party_emotes(self, room_id: str) -> None:
+        """Loads BTTV/7TV/FFZ catalogs once, in the background."""
+        if self._third_party is None or self._emote_loader_thread is not None:
+            return
+        if room_id:
+            self._room_id = room_id
+        self._emote_loader_thread = threading.Thread(
+            target=self._third_party.load,
+            args=(self._room_id,),
+            name="twitch-third-party-emotes",
+            daemon=True,
+        )
+        self._emote_loader_thread.start()
 
     def _send(self, line: str) -> None:
         if self._socket is None:

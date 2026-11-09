@@ -23,7 +23,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
           cache: pip
@@ -113,20 +113,6 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "release_tag=v$version" >> "$GITHUB_OUTPUT"
 
-      - name: Require merged pull request provenance
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          count=$(gh api \
-            -H "Accept: application/vnd.github+json" \
-            "/repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" \
-            --jq '[.[] | select(.merged_at != null and .base.ref == "main")] | length')
-          if [ "$count" -lt 1 ]; then
-            echo "Refusing to publish: $GITHUB_SHA is not the result of a merged pull request into main." >&2
-            exit 1
-          fi
-
       - name: Publish only a new version tag
         id: release
         shell: bash
@@ -137,9 +123,33 @@ jobs:
             echo "Release $RELEASE_TAG already exists; this main merge is not a new release."
             echo "should_release=false" >> "$GITHUB_OUTPUT"
           else
-            echo "Release $RELEASE_TAG is new and may be published."
+            echo "Release $RELEASE_TAG is new and may be published after provenance verification."
             echo "should_release=true" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Require merged pull request provenance
+        if: steps.release.outputs.should_release == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          count=0
+          for attempt in 1 2 3 4 5 6; do
+            count=$(gh api \
+              -H "Accept: application/vnd.github+json" \
+              "/repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" \
+              --jq '[.[] | select(.merged_at != null and .base.ref == "main")] | length')
+            if [ "$count" -ge 1 ]; then
+              echo "Verified merged pull request provenance on attempt $attempt."
+              exit 0
+            fi
+            if [ "$attempt" -lt 6 ]; then
+              echo "Pull request association is not indexed yet; retrying in 5 seconds ($attempt/6)..."
+              sleep 5
+            fi
+          done
+          echo "Refusing to publish: $GITHUB_SHA is not associated with a merged pull request into main after retries." >&2
+          exit 1
 
   build:
     needs: release-gate
@@ -160,7 +170,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
           cache: pip
@@ -170,6 +180,19 @@ jobs:
 
       - name: Install locked dependencies
         run: python -m pip install --disable-pip-version-check -r requirements.lock.txt -r requirements-build.lock.txt
+
+      # The release workflow runs independently of the pull request checks.
+      # Fail closed here before building or uploading publicly downloadable files.
+      - name: Audit locked release dependencies
+        run: |
+          python -m pip install --disable-pip-version-check pip-audit==2.10.1
+          python -m pip_audit --strict -r requirements.lock.txt
+          python -m pip_audit --strict -r requirements-build.lock.txt
+
+      - name: Type-check release sources
+        run: |
+          python -m pip install --disable-pip-version-check mypy==2.3.1 types-requests
+          python -m mypy
 
       - name: Run unit tests
         env:
@@ -233,16 +256,16 @@ jobs:
       - name: Refuse to overwrite an existing release tag
         shell: pwsh
         run: |
-          git ls-remote --exit-code --tags origin "refs/tags/$env:RELEASE_TAG" *> $null
-          if ($LASTEXITCODE -eq 0) {
-            throw "Release tag $env:RELEASE_TAG appeared while this build was running; refusing to overwrite it."
-          }
-          if ($LASTEXITCODE -ne 2) {
+          $existingTag = git ls-remote --tags origin "refs/tags/$env:RELEASE_TAG"
+          if ($LASTEXITCODE -ne 0) {
             throw "Unable to verify whether release tag $env:RELEASE_TAG already exists."
+          }
+          if ($existingTag) {
+            throw "Release tag $env:RELEASE_TAG appeared while this build was running; refusing to overwrite it."
           }
 
       - name: Upload workflow artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: SindromeChatOverlay-Windows-v${{ env.VERSION }}
           path: |
@@ -251,34 +274,30 @@ jobs:
             SindromeChatOverlay-Windows-v${{ env.VERSION }}.zip
             SHA256SUMS.txt
 
+      - name: Extract release notes from CHANGELOG
+        shell: pwsh
+        env:
+          VERSION: ${{ env.VERSION }}
+        run: |
+          $changelog = Get-Content CHANGELOG.md -Raw
+          $version = $env:VERSION
+          $pattern = "(?ms)^## \[" + [regex]::Escape($version) + "\]\s*-.*?\r?\n(.*?)(?=^## \[|\z)"
+          $match = [regex]::Match($changelog, $pattern)
+          if (-not $match.Success -or [string]::IsNullOrWhiteSpace($match.Groups[1].Value)) {
+            throw "CHANGELOG.md has no '## [$version]' section with notes; add release notes before publishing."
+          }
+          $notes = $match.Groups[1].Value.Trim() + "`n`n**Recommended:** download ``SindromeChatOverlay-Setup-v$version.exe`` for a standard Windows installation with shortcuts and an uninstaller. Portable builds are also available as a standalone ``.exe`` and a ``.zip`` archive."
+          Set-Content release_notes.md -Value $notes -Encoding utf8
+
       - name: Publish GitHub release
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           name: Sindrome Chat Overlay ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           make_latest: true
           fail_on_unmatched_files: true
-          body: |
-            Sindrome Chat Overlay combines Twitch and YouTube live chat in one transparent Windows overlay.
-
-            The interface starts in English and can be changed to Brazilian Portuguese under Settings → Language. Automatic scrolling and message sounds are enabled by default.
-
-            YouTube setup is now simpler: the main screen shows only the channel/live link and the real connection mode. The optional Data API key lives in Advanced settings, stays masked, is validated without blocking the UI, and distinguishes invalid credentials from temporary network or quota failures.
-
-            Chat messages now use a cleaner game-HUD layout: metadata stays transparent, only the text/emote content receives a compact dark background, spacing is tighter, and a discreet `⋮⋮` handle makes the draggable header obvious even at 0% panel opacity.
-
-            The in-app updater now downloads the exact installer in the background, verifies its release URL, size, and SHA-256 checksum, and asks again before running it. It never installs an update silently.
-
-            Notification audio now has six built-in sounds, independent Twitch and YouTube choices, preview buttons, a 0–200% volume control, and a configurable global anti-spam interval for fast chats.
-
-            Version 1.8 also adds a native Android app with a normal chat screen and an optional draggable, resizable floating overlay. The Android workflow attaches the signed APK to this Release after the Windows build when private Android signing Secrets are configured.
-
-            The existing official `liveChatMessages.streamList`, automatic live discovery, compatibility mode, DPAPI protection, Twitch emotes, badges, and individual username colours are preserved.
-
-            **Recommended:** download `SindromeChatOverlay-Setup-v${{ env.VERSION }}.exe` for a standard Windows installation with shortcuts and an uninstaller.
-
-            Portable builds are also available as a standalone `.exe` and a `.zip` archive.
+          body_path: release_notes.md
           files: |
             release/SindromeChatOverlay-Setup-v${{ env.VERSION }}.exe
             dist/SindromeChatOverlay.exe

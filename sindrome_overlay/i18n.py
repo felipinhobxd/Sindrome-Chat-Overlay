@@ -16,6 +16,11 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "language_hint": "The interface language changes after you save.",
         "channels": "Channels",
         "appearance": "Appearance",
+        "card_theme": "Card theme",
+        "card_theme_dark": "Dark (default)",
+        "card_theme_amoled": "AMOLED black",
+        "card_theme_ocean": "Deep ocean blue",
+        "card_theme_light": "Light",
         "sound": "Sound",
         "global_shortcut_hint": (
             "Global shortcut: Ctrl + Shift + O locks or unlocks mouse clicks on the overlay."
@@ -99,6 +104,9 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "show_timestamps": "Show timestamps",
         "show_platform": "Show Twitch / YouTube on each message",
         "hide_commands": "Hide messages that start with !",
+        "third_party_emotes": "Use BetterTTV, 7TV and FrankerFaceZ emotes",
+        "hidden_users": "Hidden users (comma or line separated)",
+        "hidden_words": "Hidden words or phrases (comma separated)",
         "panel_opacity": "Panel opacity:",
         "message_opacity": "Message opacity:",
         "font_size": "Font size:",
@@ -216,6 +224,11 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "language_hint": "O idioma da interface muda depois que você salvar.",
         "channels": "Canais",
         "appearance": "Aparência",
+        "card_theme": "Tema do cartão",
+        "card_theme_dark": "Escuro (padrão)",
+        "card_theme_amoled": "Preto AMOLED",
+        "card_theme_ocean": "Azul oceano profundo",
+        "card_theme_light": "Claro",
         "sound": "Som",
         "global_shortcut_hint": (
             "Atalho global: Ctrl + Shift + O bloqueia ou desbloqueia os cliques no overlay."
@@ -301,6 +314,9 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "show_timestamps": "Mostrar horário",
         "show_platform": "Mostrar Twitch / YouTube em cada mensagem",
         "hide_commands": "Ocultar mensagens que começam com !",
+        "third_party_emotes": "Usar emotes do BetterTTV, 7TV e FrankerFaceZ",
+        "hidden_users": "Usuários ocultos (separados por vírgula ou linha)",
+        "hidden_words": "Palavras ou frases ocultas (separadas por vírgula)",
         "panel_opacity": "Opacidade do painel:",
         "message_opacity": "Opacidade das mensagens:",
         "font_size": "Tamanho da fonte:",

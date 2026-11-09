@@ -1,5 +1,6 @@
 package com.sindromegames.chatoverlay.providers;
 
+import com.sindromegames.chatoverlay.model.ChatEmote;
 import com.sindromegames.chatoverlay.model.ChatMessage;
 import com.sindromegames.chatoverlay.net.JsonTools;
 import com.sindromegames.chatoverlay.net.NetClient;
@@ -16,7 +17,6 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.IOException;
-import java.net.URI;
 import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -47,6 +47,10 @@ public final class YouTubeProvider extends ChatProvider {
     private final String apiKey;
     private final String language;
     private final NetClient net = new NetClient();
+    private static final long BOOTSTRAP_TTL_MS = 60_000L;
+    private volatile Bootstrap cachedBootstrap;
+    private volatile String cachedBootstrapVideoId = "";
+    private volatile long cachedBootstrapAt;
     private final Set<String> seenIds = new HashSet<>();
     private final ArrayDeque<String> seenOrder = new ArrayDeque<>();
     private volatile ManagedChannel grpcChannel;
@@ -126,7 +130,7 @@ public final class YouTubeProvider extends ChatProvider {
     }
 
     private void runCompatibility(String videoId, YouTubeMode mode) throws Exception {
-        Bootstrap bootstrap = bootstrap(videoId);
+        Bootstrap bootstrap = bootstrap(videoId, false);
         String continuation = bootstrap.continuation;
         callback.onStatus("youtube", mode == YouTubeMode.COMPATIBILITY_FALLBACK
                 ? "compatibility_fallback" : "compatibility", mode);
@@ -153,7 +157,7 @@ public final class YouTubeProvider extends ChatProvider {
             if (response.code() == 429) throw new RateLimited();
             if (response.code() == 401 || response.code() == 403) {
                 if (++failures >= 3) throw new IOException("Compatibility chat rejected");
-                bootstrap = bootstrap(videoId);
+                bootstrap = bootstrap(videoId, true);
                 continuation = bootstrap.continuation;
                 continue;
             }
@@ -173,7 +177,16 @@ public final class YouTubeProvider extends ChatProvider {
         }
     }
 
-    private Bootstrap bootstrap(String videoId) throws Exception {
+    private Bootstrap bootstrap(String videoId, boolean forceRefresh) throws Exception {
+        // The watch page is 1-2 MB; re-downloading it on every reconnect (and
+        // every provider restart) is wasteful on mobile data. innertube
+        // key/client version are stable, so a short TTL cache is enough.
+        Bootstrap cached = cachedBootstrap;
+        if (!forceRefresh && cached != null
+                && videoId.equals(cachedBootstrapVideoId)
+                && android.os.SystemClock.elapsedRealtime() - cachedBootstrapAt < BOOTSTRAP_TTL_MS) {
+            return cached;
+        }
         String videoUrl = "https://www.youtube.com/watch?v=" + videoId;
         NetClient.ResponseData response = net.get(videoUrl);
         if (response.code() == 429) throw new RateLimited();
@@ -183,6 +196,8 @@ public final class YouTubeProvider extends ChatProvider {
         Object liveRenderer = JsonTools.findFirst(initial, "liveChatRenderer");
         if (!(liveRenderer instanceof JSONObject renderer)) throw new ChatDisabled();
         JsonTools.Continuation continuation = JsonTools.findContinuation(renderer.opt("continuations"));
+        if (continuation.token().isEmpty())
+            continuation = JsonTools.findContinuation(renderer);
         if (continuation.token().isEmpty()) throw new ChatDisabled();
         String key = JsonTools.extractConfigString(response.body(), "INNERTUBE_API_KEY");
         String clientVersion = JsonTools.extractConfigString(response.body(), "INNERTUBE_CLIENT_VERSION");
@@ -199,7 +214,11 @@ public final class YouTubeProvider extends ChatProvider {
                 .put("clientName", clientName).put("clientVersion", clientVersion);
         String visitor = JsonTools.extractConfigString(response.body(), "VISITOR_DATA");
         if (!visitor.isEmpty()) client.put("visitorData", visitor);
-        return new Bootstrap(videoUrl, continuation.token(), key, clientNumber, clientVersion, context);
+        Bootstrap built = new Bootstrap(videoUrl, continuation.token(), key, clientNumber, clientVersion, context);
+        cachedBootstrap = built;
+        cachedBootstrapVideoId = videoId;
+        cachedBootstrapAt = android.os.SystemClock.elapsedRealtime();
+        return built;
     }
 
     private void runOfficial(String videoId) throws Exception {
@@ -222,7 +241,6 @@ public final class YouTubeProvider extends ChatProvider {
         Map<String, String> parameters = new LinkedHashMap<>();
         parameters.put("part", "liveStreamingDetails");
         parameters.put("id", videoId);
-        parameters.put("key", apiKey);
         JSONObject details = apiGet("https://www.googleapis.com/youtube/v3/videos", parameters);
         JSONArray items = details.optJSONArray("items");
         if (items == null || items.length() == 0) throw new StreamOffline();
@@ -254,7 +272,13 @@ public final class YouTubeProvider extends ChatProvider {
                 headers.put(apiHeader, apiKey);
                 V3DataLiveChatMessageServiceGrpc.V3DataLiveChatMessageServiceBlockingStub stub =
                         V3DataLiveChatMessageServiceGrpc.newBlockingStub(ClientInterceptors.intercept(
-                                channel, MetadataUtils.newAttachHeadersInterceptor(headers)));
+                                channel, MetadataUtils.newAttachHeadersInterceptor(headers)))
+                                // Without a deadline hasNext()/next() can block
+                                // forever on a stalled stream that keepalive
+                                // pings fail to detect. DEADLINE_EXCEEDED is
+                                // handled by the catch below (backoff, then
+                                // fallback to polling after repeated failures).
+                                .withDeadlineAfter(120, TimeUnit.SECONDS);
                 LiveChatMessageListRequest.Builder request = LiveChatMessageListRequest.newBuilder()
                         .setLiveChatId(chatId).setHl(language).setProfileImageSize(32)
                         .addPart("snippet").addPart("authorDetails");
@@ -314,7 +338,6 @@ public final class YouTubeProvider extends ChatProvider {
             parameters.put("part", "id,snippet,authorDetails");
             parameters.put("liveChatId", chatId);
             parameters.put("maxResults", "200");
-            parameters.put("key", apiKey);
             if (!officialPageToken.isEmpty()) parameters.put("pageToken", officialPageToken);
             JSONObject body = apiGet("https://www.googleapis.com/youtube/v3/liveChat/messages", parameters);
             JSONArray items = body.optJSONArray("items");
@@ -332,7 +355,9 @@ public final class YouTubeProvider extends ChatProvider {
 
     private JSONObject apiGet(String url, Map<String, String> parameters) throws Exception {
         try {
-            return net.getJson(url, parameters);
+            // The API key travels in the X-goog-api-key header instead of the
+            // "key" query parameter so it cannot leak into proxy/CDN logs.
+            return net.getJson(url, parameters, Map.of("X-goog-api-key", apiKey));
         } catch (NetClient.HttpFailure failure) {
             String reason = apiErrorReason(failure.responseBody);
             if (failure.code == 429 || reason.contains("quota") || reason.contains("rate"))
@@ -394,7 +419,8 @@ public final class YouTubeProvider extends ChatProvider {
         if (renderer == null) return null;
         String author = JsonTools.cleanText(renderer.opt("authorName"));
         if (author.isEmpty()) author = "YouTube";
-        String text = JsonTools.cleanText(renderer.opt("message"));
+        TextWithEmotes rich = youtubeTextAndEmotes(renderer.opt("message"));
+        String text = rich.text();
         if (text.isEmpty()) text = JsonTools.cleanText(renderer.opt("headerSubtext"));
         if (text.isEmpty()) text = JsonTools.cleanText(renderer.opt("primaryText"));
         if (text.isEmpty()) text = JsonTools.cleanText(renderer.opt("subtext"));
@@ -411,9 +437,80 @@ public final class YouTubeProvider extends ChatProvider {
                 .authorId(authorId)
                 .messageId(renderer.optString("id", ""))
                 .amount(JsonTools.cleanText(renderer.opt("purchaseAmountText")))
-                .kind(kind).badges(badges)
+                .kind(kind).badges(badges).emotes(rich.emotes())
                 .timestamp(JsonTools.parseTimestampUsec(renderer.opt("timestampUsec")))
                 .build();
+    }
+
+    private static TextWithEmotes youtubeTextAndEmotes(Object raw) {
+        if (!(raw instanceof JSONObject object))
+            return new TextWithEmotes(JsonTools.cleanText(raw), List.of());
+        JSONArray runs = object.optJSONArray("runs");
+        if (runs == null) return new TextWithEmotes(JsonTools.cleanText(raw), List.of());
+
+        StringBuilder text = new StringBuilder();
+        List<ChatEmote> emotes = new ArrayList<>();
+        for (int index = 0; index < runs.length(); index++) {
+            JSONObject run = runs.optJSONObject(index);
+            if (run == null) continue;
+            if (run.has("text")) {
+                text.append(run.optString("text", ""));
+                continue;
+            }
+            JSONObject emoji = run.optJSONObject("emoji");
+            if (emoji == null) continue;
+            String name = firstArrayValue(emoji.optJSONArray("shortcuts"));
+            if (name.isEmpty()) name = firstArrayValue(emoji.optJSONArray("searchTerms"));
+            if (name.isEmpty()) name = emoji.optString("emojiId", "");
+            if (name.isEmpty()) continue;
+            int start = text.length();
+            text.append(name);
+            int end = text.length();
+            String imageUrl = youtubeEmojiImageUrl(emoji);
+            if (!imageUrl.isEmpty() && (emoji.optBoolean("isCustomEmoji", false)
+                    || (name.startsWith(":") && name.endsWith(":")))) {
+                String id = first(emoji.optString("emojiId", ""), name);
+                emotes.add(new ChatEmote(id, start, end, name, imageUrl));
+            }
+        }
+        return trimTextAndEmotes(text.toString(), emotes);
+    }
+
+    private static TextWithEmotes trimTextAndEmotes(String value, List<ChatEmote> source) {
+        int start = 0;
+        int end = value.length();
+        while (start < end && Character.isWhitespace(value.charAt(start))) start++;
+        while (end > start && Character.isWhitespace(value.charAt(end - 1))) end--;
+        if (start == 0 && end == value.length()) return new TextWithEmotes(value, source);
+        List<ChatEmote> adjusted = new ArrayList<>();
+        for (ChatEmote emote : source) {
+            if (emote.start >= start && emote.end <= end)
+                adjusted.add(new ChatEmote(emote.id, emote.start - start, emote.end - start,
+                        emote.name, emote.imageUrl));
+        }
+        return new TextWithEmotes(value.substring(start, end), adjusted);
+    }
+
+    private static String youtubeEmojiImageUrl(JSONObject emoji) {
+        JSONObject image = emoji.optJSONObject("image");
+        JSONArray thumbnails = image == null ? null : image.optJSONArray("thumbnails");
+        if (thumbnails == null) return "";
+        String result = "";
+        for (int index = 0; index < thumbnails.length(); index++) {
+            JSONObject item = thumbnails.optJSONObject(index);
+            if (item != null && !item.optString("url", "").isEmpty()) result = item.optString("url", "");
+        }
+        if (result.startsWith("//")) result = "https:" + result;
+        return result.startsWith("https://") ? result : "";
+    }
+
+    private static String firstArrayValue(JSONArray values) {
+        if (values == null) return "";
+        for (int index = 0; index < values.length(); index++) {
+            String value = values.optString(index, "");
+            if (!value.isEmpty()) return value;
+        }
+        return "";
     }
 
     private static List<String> compatibilityBadges(JSONArray raw) {
@@ -526,6 +623,7 @@ public final class YouTubeProvider extends ChatProvider {
         return "";
     }
 
+    private record TextWithEmotes(String text, List<ChatEmote> emotes) {}
     private record Bootstrap(String videoUrl, String continuation, String innertubeKey,
                              String clientNameNumeric, String clientVersion, JSONObject context) {}
     private static final class StreamOffline extends Exception {}

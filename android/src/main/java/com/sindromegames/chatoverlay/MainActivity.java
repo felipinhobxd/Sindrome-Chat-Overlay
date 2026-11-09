@@ -46,6 +46,9 @@ public final class MainActivity extends AppCompatActivity implements ChatBus.Lis
     @Override protected void onCreate(Bundle savedInstanceState) {
         AppSettings.applyLocale(this);
         super.onCreate(savedInstanceState);
+        if (savedInstanceState != null) {
+            pendingOverlay = savedInstanceState.getBoolean("pending_overlay", false);
+        }
         buildUi();
         requestNotificationsIfNeeded();
         getWindow().getDecorView().post(() -> {
@@ -128,7 +131,27 @@ public final class MainActivity extends AppCompatActivity implements ChatBus.Lis
         root.addView(chat, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1));
         setContentView(root);
+        applyWindowInsets(root);
         renderState(ChatBus.state());
+    }
+
+    /**
+     * targetSdk 35 runs activities edge-to-edge; without consuming the bars
+     * inset the programmatic UI would draw under the status/navigation bars.
+     */
+    private void applyWindowInsets(LinearLayout root) {
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(root, (view, insets) -> {
+            androidx.core.graphics.Insets bars = insets.getInsets(
+                    androidx.core.view.WindowInsetsCompat.Type.systemBars());
+            view.setPadding(dp(12) + bars.left, dp(10) + bars.top,
+                    dp(12) + bars.right, dp(8) + bars.bottom);
+            return androidx.core.view.WindowInsetsCompat.CONSUMED;
+        });
+    }
+
+    @Override protected void onSaveInstanceState(Bundle outState) {
+        super.onSaveInstanceState(outState);
+        outState.putBoolean("pending_overlay", pendingOverlay);
     }
 
     private void toggleOverlay() {

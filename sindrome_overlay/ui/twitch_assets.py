@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import logging
 import os
@@ -26,6 +27,8 @@ _MAX_ACTIVE_DOWNLOADS = 6
 _MAX_QUEUED_DOWNLOADS = 128
 _MAX_MEMORY_IMAGES = 48
 _MAX_RETRY_ENTRIES = 256
+_MAX_IMAGE_BYTES = 2_000_000
+_MAX_MANIFEST_BYTES = 5_000_000
 
 
 class TwitchAssetCache(QObject):
@@ -45,15 +48,39 @@ class TwitchAssetCache(QObject):
         self._manifest_loaded: set[str] = set()
         self._manifest_retry_after: dict[str, float] = {}
         self._writes_since_prune = 0
+        # Qt replies are read incrementally; never collect whole remote bodies.
+        self._reply_buffers: dict[QNetworkReply, bytearray] = {}
+        self._reply_limits: dict[QNetworkReply, int] = {}
+        self._oversized_replies: set[QNetworkReply] = set()
         self._network = QNetworkAccessManager(self)
         self._network.finished.connect(self._download_finished)
         try:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
             self._prune_disk_cache()
         except OSError as exc:
-            self.log.debug("Unable to prepare the Twitch asset cache: %s", exc)
+            self.log.debug("Unable to prepare the chat asset cache: %s", exc)
 
-    def emote_source(self, emote_id: str) -> str:
+    def emote_source(self, emote_id: str, image_url: str = "") -> str:
+        if image_url:
+            normalized_url = self._normalize_image_url(image_url)
+            if not emote_id or not self._is_trusted_image_url(normalized_url):
+                return ""
+            digest = hashlib.sha256(normalized_url.encode("utf-8")).hexdigest()
+            asset_key = f"youtube-emote:{digest}"
+            path = self.cache_dir / f"youtube-emote-{digest}.png"
+            source = self._cached_source(asset_key, path)
+            if source:
+                return source
+            if self._may_retry(asset_key):
+                self._start_image_download(
+                    asset_key,
+                    normalized_url,
+                    path,
+                    "emote",
+                    emote_id,
+                )
+            return ""
+
         if not _SAFE_ID.fullmatch(emote_id):
             return ""
         asset_key = f"emote:{emote_id}"
@@ -130,6 +157,7 @@ class TwitchAssetCache(QObject):
         reply.setProperty("asset_type", asset_type)
         reply.setProperty("signal_key", signal_key)
         reply.setProperty("cache_path", str(path))
+        self._track_reply(reply, _MAX_IMAGE_BYTES)
 
     def _request_badge_manifest(self, scope: str) -> None:
         if scope in self._manifest_loaded or scope in self._manifest_pending:
@@ -143,17 +171,45 @@ class TwitchAssetCache(QObject):
         reply = self._network.get(self._request(url))
         reply.setProperty("download_kind", "badge_manifest")
         reply.setProperty("manifest_scope", scope)
+        self._track_reply(reply, _MAX_MANIFEST_BYTES)
+
+    def _track_reply(self, reply: QNetworkReply, limit: int) -> None:
+        self._reply_buffers[reply] = bytearray()
+        self._reply_limits[reply] = limit
+        # Also limit the bytes queued inside Qt between readyRead callbacks.
+        reply.setReadBufferSize(limit + 1)
+        reply.readyRead.connect(lambda: self._consume_reply_data(reply))
+
+    def _consume_reply_data(self, reply: QNetworkReply) -> None:
+        if reply in self._oversized_replies:
+            return
+        buffer = self._reply_buffers.get(reply)
+        if buffer is None:
+            return
+        available = int(reply.bytesAvailable())
+        remaining = self._reply_limits[reply] - len(buffer)
+        if available > remaining:
+            # Abort before reading/allocating a hostile oversized payload.
+            self._oversized_replies.add(reply)
+            reply.abort()
+        elif available > 0:
+            buffer.extend(bytes(reply.read(available).data()))
 
     def _download_finished(self, reply: QNetworkReply) -> None:
         try:
+            # The final bytes may arrive before Qt emits finished.
+            self._consume_reply_data(reply)
             kind = str(reply.property("download_kind") or "")
             if kind == "image":
                 self._image_download_finished(reply)
             elif kind == "badge_manifest":
                 self._manifest_download_finished(reply)
         except Exception as exc:  # noqa: BLE001 - Qt network callback boundary
-            self.log.debug("Unable to process a Twitch asset response: %s", exc)
+            self.log.debug("Unable to process a chat asset response: %s", exc)
         finally:
+            self._reply_buffers.pop(reply, None)
+            self._reply_limits.pop(reply, None)
+            self._oversized_replies.discard(reply)
             reply.deleteLater()
             self._start_queued_downloads()
 
@@ -162,17 +218,17 @@ class TwitchAssetCache(QObject):
         asset_type = str(reply.property("asset_type") or "")
         signal_key = str(reply.property("signal_key") or "")
         self._pending.discard(asset_key)
+        if reply in self._oversized_replies:
+            self._mark_failed(asset_key, "image exceeds the 2 MB limit")
+            return
         if not self._reply_succeeded(reply):
             self._mark_failed(asset_key, reply.errorString())
             return
 
-        data = bytes(reply.readAll())
-        if len(data) > 2_000_000:
-            self._mark_failed(asset_key, "image exceeds the 2 MB limit")
-            return
+        data = bytes(self._reply_buffers.get(reply, b""))
         image = QImage.fromData(data)
-        if image.isNull():
-            self._mark_failed(asset_key, "invalid image data")
+        if image.isNull() or image.width() > 1024 or image.height() > 1024 or image.width() * image.height() > 1_048_576:
+            self._mark_failed(asset_key, "invalid or oversized image data")
             return
 
         path = Path(str(reply.property("cache_path") or ""))
@@ -191,7 +247,7 @@ class TwitchAssetCache(QObject):
             self._memory_sources.move_to_end(asset_key)
             while len(self._memory_sources) > _MAX_MEMORY_IMAGES:
                 self._memory_sources.popitem(last=False)
-            self.log.debug("Unable to persist Twitch asset %s: %s", asset_key, exc)
+            self.log.debug("Unable to persist chat asset %s: %s", asset_key, exc)
 
         self._retry_after.pop(asset_key, None)
         if asset_type == "emote":
@@ -202,6 +258,9 @@ class TwitchAssetCache(QObject):
     def _manifest_download_finished(self, reply: QNetworkReply) -> None:
         scope = str(reply.property("manifest_scope") or "")
         self._manifest_pending.discard(scope)
+        if reply in self._oversized_replies:
+            self._manifest_retry_after[scope] = time.monotonic() + 300
+            return
         if not self._reply_succeeded(reply):
             self._manifest_retry_after[scope] = time.monotonic() + 300
             self.log.debug(
@@ -209,10 +268,7 @@ class TwitchAssetCache(QObject):
             )
             return
 
-        data = bytes(reply.readAll())
-        if len(data) > 5_000_000:
-            self._manifest_retry_after[scope] = time.monotonic() + 300
-            return
+        data = bytes(self._reply_buffers.get(reply, b""))
         try:
             payload = json.loads(data.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
@@ -266,13 +322,23 @@ class TwitchAssetCache(QObject):
         )
 
     @staticmethod
+    def _normalize_image_url(url: str) -> str:
+        value = url.strip()
+        return f"https:{value}" if value.startswith("//") else value
+
+    @staticmethod
     def _is_trusted_image_url(url: str) -> bool:
         parsed = QUrl(url)
         host = parsed.host().lower()
         return parsed.scheme().lower() == "https" and (
-            host == "static-cdn.jtvnw.net"
-            or host == "badges.twitch.tv"
-            or host.endswith(".twitch.tv")
+            host in {
+                "static-cdn.jtvnw.net",
+                "badges.twitch.tv",
+                "cdn.betterttv.net",
+                "cdn.7tv.app",
+                "cdn.frankerfacez.com",
+            }
+            or host.endswith((".twitch.tv", ".ggpht.com", ".googleusercontent.com"))
         )
 
     def _cached_source(self, asset_key: str, path: Path) -> str:
@@ -293,11 +359,11 @@ class TwitchAssetCache(QObject):
         if not asset_key:
             return
         self._remember_retry(asset_key, 300)
-        self.log.debug("Unable to download Twitch asset %s: %s", asset_key, reason)
+        self.log.debug("Unable to download chat asset %s: %s", asset_key, reason)
 
     def _remember_retry(self, asset_key: str, delay_seconds: float) -> None:
         if len(self._retry_after) >= _MAX_RETRY_ENTRIES and asset_key not in self._retry_after:
-            oldest_key = min(self._retry_after, key=self._retry_after.get)
+            oldest_key = min(self._retry_after, key=lambda key: self._retry_after[key])
             self._retry_after.pop(oldest_key, None)
         self._retry_after[asset_key] = time.monotonic() + delay_seconds
 

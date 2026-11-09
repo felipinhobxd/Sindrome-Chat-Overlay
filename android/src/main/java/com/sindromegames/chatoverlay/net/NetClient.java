@@ -4,9 +4,15 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.IOException;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
+import okhttp3.Call;
 import okhttp3.HttpUrl;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
@@ -16,33 +22,57 @@ import okhttp3.Response;
 
 public final class NetClient {
     private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
-    private final OkHttpClient client;
+    // Covers YouTube HTML, JSON replies and third-party emote catalogs.
+    // A compressed or chunked HTTP response is also limited after decompression.
+    private static final int MAX_RESPONSE_BYTES = 8_000_000;
+    // One shared connection pool and thread pool for the whole process:
+    // each OkHttpClient owns its own executor and keep-alive pool, and the
+    // app was creating one per provider, per key validation and one for
+    // emote downloads.
+    private static final OkHttpClient SHARED = new OkHttpClient.Builder()
+            .connectTimeout(12, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .writeTimeout(15, TimeUnit.SECONDS)
+            .followRedirects(true)
+            .followSslRedirects(true)
+            .build();
+
+    public static OkHttpClient sharedClient() {
+        return SHARED;
+    }
+
+    private final OkHttpClient client = SHARED;
+    private final Set<Call> inFlight = ConcurrentHashMap.newKeySet();
 
     public NetClient() {
-        client = new OkHttpClient.Builder()
-                .connectTimeout(12, TimeUnit.SECONDS)
-                .readTimeout(30, TimeUnit.SECONDS)
-                .writeTimeout(15, TimeUnit.SECONDS)
-                .followRedirects(true)
-                .followSslRedirects(true)
-                .build();
     }
 
     public ResponseData get(String url) throws IOException {
-        return execute(new Request.Builder().url(url).header("User-Agent", userAgent())
-                .header("Accept-Language", "en-US,en;q=0.8").get().build());
+        Request.Builder builder = new Request.Builder().url(url).get();
+        applyBrowserHeaders(builder, builder.build().url());
+        return execute(builder.build());
     }
 
     public JSONObject getJson(String url, Map<String, String> parameters)
             throws IOException, JSONException {
+        return getJson(url, parameters, Map.of());
+    }
+
+    public JSONObject getJson(String url, Map<String, String> parameters,
+            Map<String, String> headers) throws IOException, JSONException {
         HttpUrl parsed = HttpUrl.parse(url);
-        if (parsed == null) throw new IOException("Invalid HTTPS URL");
+        if (parsed == null || !parsed.isHttps()) throw new IOException("Invalid HTTPS URL");
         HttpUrl.Builder builder = parsed.newBuilder();
         for (Map.Entry<String, String> item : parameters.entrySet()) {
             if (item.getValue() != null && !item.getValue().isEmpty())
                 builder.addQueryParameter(item.getKey(), item.getValue());
         }
-        ResponseData response = get(builder.build().toString());
+        Request.Builder request = new Request.Builder().url(builder.build()).get();
+        applyBrowserHeaders(request, request.build().url());
+        for (Map.Entry<String, String> item : headers.entrySet())
+            if (item.getValue() != null && !item.getValue().isEmpty())
+                request.header(item.getKey(), item.getValue());
+        ResponseData response = execute(request.build());
         if (response.code < 200 || response.code >= 300)
             throw new HttpFailure(response.code, response.body);
         return new JSONObject(response.body);
@@ -51,25 +81,58 @@ public final class NetClient {
     public ResponseData postJson(String url, JSONObject payload, Map<String, String> headers)
             throws IOException {
         Request.Builder builder = new Request.Builder().url(url)
-                .header("User-Agent", userAgent())
                 .post(RequestBody.create(payload.toString(), JSON));
+        applyBrowserHeaders(builder, builder.build().url());
         for (Map.Entry<String, String> item : headers.entrySet())
             builder.header(item.getKey(), item.getValue());
         return execute(builder.build());
     }
 
     private ResponseData execute(Request request) throws IOException {
-        try (Response response = client.newCall(request).execute()) {
-            String body = response.body() == null ? "" : response.body().string();
+        Call call = client.newCall(request);
+        inFlight.add(call);
+        try (Response response = call.execute()) {
+            String body = "";
+            if (response.body() != null) {
+                byte[] data = BoundedStreams.readBytes(
+                        response.body().byteStream(), response.body().contentLength(),
+                        MAX_RESPONSE_BYTES);
+                MediaType type = response.body().contentType();
+                Charset charset = type == null
+                        ? StandardCharsets.UTF_8 : type.charset(StandardCharsets.UTF_8);
+                body = new String(data, charset);
+            }
             return new ResponseData(response.code(), response.request().url().toString(), body);
+        } finally {
+            inFlight.remove(call);
         }
     }
 
-    public void cancelAll() { client.dispatcher().cancelAll(); }
+    /** Cancels only the requests issued through this NetClient instance. */
+    public void cancelAll() {
+        for (Call call : inFlight) call.cancel();
+    }
+
+    private static void applyBrowserHeaders(Request.Builder builder, HttpUrl url) {
+        builder.header("User-Agent", userAgent())
+                .header("Accept", "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8")
+                .header("Accept-Language", "en-US,en;q=0.9");
+        if (isYouTubeHost(url.host())) {
+            // Avoid YouTube's consent interstitial, which does not contain the live-chat bootstrap data.
+            builder.header("Cookie", "SOCS=CAI");
+        }
+    }
+
+    static boolean isYouTubeHost(String hostValue) {
+        String host = hostValue == null ? "" : hostValue.toLowerCase(Locale.ROOT);
+        return host.equals("youtube.com") || host.equals("www.youtube.com")
+                || host.equals("m.youtube.com") || host.endsWith(".youtube.com");
+    }
 
     private static String userAgent() {
-        return "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 "
-                + "Chrome/131.0 Mobile Safari/537.36";
+        // The YouTube compatibility parser expects the normal web renderer rather than the mobile variant.
+        return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                + "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
     }
 
     public record ResponseData(int code, String finalUrl, String body) {}
@@ -84,4 +147,3 @@ public final class NetClient {
         }
     }
 }
-

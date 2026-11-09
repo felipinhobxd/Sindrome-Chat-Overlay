@@ -5,11 +5,13 @@ import ctypes
 import json
 import os
 from ctypes import wintypes
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
+from .card_themes import DEFAULT_CARD_THEME, normalize_card_theme
 from .i18n import normalize_language
+from .profiles import normalize_custom_profiles, normalize_game_profiles, normalize_profile_ref
 from .sounds import DEFAULT_TWITCH_SOUND, DEFAULT_YOUTUBE_SOUND, normalize_sound_id
 from .url_utils import normalize_twitch_channel, normalize_youtube_input
 
@@ -44,6 +46,7 @@ class Settings:
     click_through: bool = False
     background_opacity: int = 72
     card_opacity: int = 78
+    card_theme: str = DEFAULT_CARD_THEME
     font_size: int = 15
     max_messages: int = 150
     message_lifetime_seconds: int = 0
@@ -57,10 +60,25 @@ class Settings:
     show_timestamps: bool = True
     show_platform_labels: bool = True
     hide_commands: bool = False
+    third_party_emotes: bool = True
+    hidden_users: str = ""
+    hidden_words: str = ""
     window_x: int = 40
     window_y: int = 80
     window_width: int = 440
     window_height: int = 720
+    obs_enabled: bool = False
+    obs_port: int = 8765
+    obs_max_messages: int = 100
+    obs_font_size: int = 20
+    obs_show_platform_labels: bool = False
+    obs_show_badges: bool = True
+    obs_show_timestamps: bool = False
+    obs_message_background_opacity: int = 72
+    overlay_profiles: dict[str, dict[str, Any]] = field(default_factory=dict)
+    active_overlay_profile: str = ""
+    automatic_profiles_enabled: bool = False
+    game_profiles: dict[str, str] = field(default_factory=dict)
 
     def normalized(self) -> Settings:
         self.language = normalize_language(self.language)
@@ -75,6 +93,7 @@ class Settings:
         self.youtube_api_key = self.youtube_api_key.strip()
         self.background_opacity = _clamp(self.background_opacity, 0, 100)
         self.card_opacity = _clamp(self.card_opacity, 0, 100)
+        self.card_theme = normalize_card_theme(self.card_theme)
         self.font_size = _clamp(self.font_size, 11, 30)
         self.max_messages = _clamp(self.max_messages, 20, 500)
         self.message_lifetime_seconds = _clamp(self.message_lifetime_seconds, 0, 600)
@@ -84,6 +103,25 @@ class Settings:
         self.sound_min_interval_ms = _clamp(self.sound_min_interval_ms, 0, 5_000)
         self.window_width = _clamp(self.window_width, 300, 2000)
         self.window_height = _clamp(self.window_height, 240, 1400)
+        self.obs_enabled = bool(self.obs_enabled)
+        self.obs_port = _clamp(self.obs_port, 1024, 65535)
+        self.obs_max_messages = _clamp(self.obs_max_messages, 20, 500)
+        self.obs_font_size = _clamp(self.obs_font_size, 11, 40)
+        self.obs_show_platform_labels = bool(self.obs_show_platform_labels)
+        self.obs_show_badges = bool(self.obs_show_badges)
+        self.obs_show_timestamps = bool(self.obs_show_timestamps)
+        self.obs_message_background_opacity = _clamp(
+            self.obs_message_background_opacity,
+            0,
+            100,
+        )
+        self.overlay_profiles = normalize_custom_profiles(self.overlay_profiles)
+        self.active_overlay_profile = normalize_profile_ref(
+            self.active_overlay_profile,
+            self.overlay_profiles,
+        )
+        self.automatic_profiles_enabled = self.automatic_profiles_enabled is True
+        self.game_profiles = normalize_game_profiles(self.game_profiles, self.overlay_profiles)
         return self
 
 
@@ -97,14 +135,49 @@ class SettingsStore:
             payload = json.loads(self.path.read_text(encoding="utf-8"))
             if not isinstance(payload, dict):
                 return defaults
-            allowed = {item.name for item in fields(Settings)}
-            values = {key: value for key, value in payload.items() if key in allowed}
+            values: dict[str, Any] = {}
+            # Treat the settings file as untrusted input. A single malformed
+            # field must not crash startup or discard other valid preferences.
+            for item in fields(Settings):
+                if item.name not in payload:
+                    continue
+                raw = payload[item.name]
+                default = getattr(defaults, item.name)
+                if isinstance(default, bool):
+                    if isinstance(raw, bool):
+                        values[item.name] = raw
+                elif isinstance(default, str):
+                    if isinstance(raw, str):
+                        values[item.name] = raw
+                elif isinstance(default, int):
+                    if not isinstance(raw, bool):
+                        try:
+                            values[item.name] = int(raw)
+                        except (TypeError, ValueError, OverflowError):
+                            pass
+                elif isinstance(default, dict):
+                    # Profile normalizers already reject malformed structures.
+                    values[item.name] = raw
             encrypted_key = values.get("youtube_api_key")
             if isinstance(encrypted_key, str):
                 try:
                     values["youtube_api_key"] = _unprotect_secret(encrypted_key)
                 except OSError:
                     values["youtube_api_key"] = ""
+            # Valid strings can still contain invalid channel names or URLs.
+            # Fall back field by field instead of discarding unrelated settings.
+            language = values.get("language", defaults.language)
+            for input_field, enabled_field, normalize in (
+                ("twitch_channel", "twitch_enabled", normalize_twitch_channel),
+                ("youtube_input", "youtube_enabled", normalize_youtube_input),
+            ):
+                candidate = values.get(input_field, getattr(defaults, input_field))
+                enabled = values.get(enabled_field, getattr(defaults, enabled_field))
+                if enabled or candidate.strip():
+                    try:
+                        normalize(candidate, language)
+                    except ValueError:
+                        values.pop(input_field, None)
             return Settings(**values).normalized()
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             return defaults

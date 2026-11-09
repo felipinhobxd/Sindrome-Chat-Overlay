@@ -1,7 +1,11 @@
 package com.sindromegames.chatoverlay.providers;
 
+import android.util.Log;
+
 import com.sindromegames.chatoverlay.model.ChatEmote;
 import com.sindromegames.chatoverlay.model.ChatMessage;
+
+import com.sindromegames.chatoverlay.net.NetClient;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
@@ -20,18 +24,25 @@ import java.util.Random;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import javax.net.ssl.SSLParameters;
 import javax.net.ssl.SSLSocket;
 import javax.net.ssl.SSLSocketFactory;
 
 public final class TwitchProvider extends ChatProvider {
+    private static final String TAG = "TwitchProvider";
     private static final Pattern EMOTE_RANGE = Pattern.compile("(\\d+)-(\\d+)");
+    private static final long HEARTBEAT_IDLE_MS = 45_000L;
+    private static final long HEARTBEAT_GRACE_MS = 12_000L;
     private final String channel;
+    private final ThirdPartyEmotes thirdPartyEmotes;
+    private final NetClient catalogClient = new NetClient();
     private volatile SSLSocket socket;
     private volatile BufferedWriter writer;
 
-    public TwitchProvider(ProviderCallback callback, String channel) {
+    public TwitchProvider(ProviderCallback callback, String channel, boolean thirdPartyEmotes) {
         super(callback);
         this.channel = channel;
+        this.thirdPartyEmotes = thirdPartyEmotes ? new ThirdPartyEmotes() : null;
     }
 
     @Override public void stop() {
@@ -45,8 +56,9 @@ public final class TwitchProvider extends ChatProvider {
             try {
                 listen();
                 delay = 2000;
-            } catch (Exception ignored) {
+            } catch (Exception e) {
                 if (stopped.get()) break;
+                Log.w(TAG, "twitch connection failed, reconnecting", e);
                 callback.onStatus("twitch", "reconnecting", YouTubeMode.STOPPED);
                 if (waitFor(delay)) break;
                 delay = Math.min(delay * 2, 30_000);
@@ -59,35 +71,71 @@ public final class TwitchProvider extends ChatProvider {
         callback.onStatus("twitch", "connecting", YouTubeMode.STOPPED);
         SSLSocket current = (SSLSocket) SSLSocketFactory.getDefault()
                 .createSocket("irc.chat.twitch.tv", 6697);
-        current.setSoTimeout(1000);
-        current.startHandshake();
+        // Register the socket before TLS negotiation so stop() and finally
+        // can close it even when handshake or stream setup throws.
         socket = current;
-        writer = new BufferedWriter(new OutputStreamWriter(current.getOutputStream(),
-                StandardCharsets.UTF_8));
-        BufferedReader reader = new BufferedReader(new InputStreamReader(current.getInputStream(),
-                StandardCharsets.UTF_8));
-        send("CAP REQ :twitch.tv/tags twitch.tv/commands");
-        send("PASS SCHMOOPIIE");
-        send("NICK justinfan" + (10_000 + new Random().nextInt(90_000)));
-        send("JOIN #" + channel);
-        boolean announced = false;
         try {
+            current.setSoTimeout(1000);
+            // SSLSocket does not verify the peer hostname by default (unlike
+            // HttpsURLConnection). Without this, a MITM with a valid certificate
+            // issued for any other domain would be accepted.
+            SSLParameters sslParameters = current.getSSLParameters();
+            sslParameters.setEndpointIdentificationAlgorithm("HTTPS");
+            current.setSSLParameters(sslParameters);
+            current.startHandshake();
+            writer = new BufferedWriter(new OutputStreamWriter(current.getOutputStream(),
+                    StandardCharsets.UTF_8));
+            BufferedReader reader = new BufferedReader(new InputStreamReader(current.getInputStream(),
+                    StandardCharsets.UTF_8));
+            send("CAP REQ :twitch.tv/tags twitch.tv/commands");
+            send("PASS SCHMOOPIIE");
+            send("NICK justinfan" + (10_000 + new Random().nextInt(90_000)));
+            send("JOIN #" + channel);
+            boolean announced = false;
+            boolean emotesRequested = false;
+            String roomId = "";
+            long lastInbound = monotonicMs();
+            long heartbeatSent = 0L;
             while (!stopped.get()) {
                 String line;
-                try { line = reader.readLine(); }
-                catch (SocketTimeoutException ignored) { continue; }
+                try {
+                    line = reader.readLine();
+                } catch (SocketTimeoutException ignored) {
+                    long now = monotonicMs();
+                    int heartbeat = heartbeatAction(now, lastInbound, heartbeatSent);
+                    if (heartbeat == 1) {
+                        send("PING :sindrome-overlay");
+                        heartbeatSent = now;
+                    } else if (heartbeat == 2) {
+                        throw new IOException("Twitch heartbeat timed out");
+                    }
+                    continue;
+                }
                 if (line == null) throw new IOException("Twitch closed the connection");
+                lastInbound = monotonicMs();
+                heartbeatSent = 0L;
                 ParsedLine parsed = parseLine(line);
                 if (parsed.ping != null) send("PONG " + parsed.ping);
                 if (parsed.reconnect) throw new IOException("Twitch requested reconnection");
                 if (parsed.clear) callback.onClear("twitch");
                 if (!parsed.deleteId.isEmpty()) callback.onDelete("twitch", parsed.deleteId);
+                if (!parsed.deleteUserId.isEmpty()) callback.onDeleteUser("twitch", parsed.deleteUserId);
+                if (!parsed.roomId.isEmpty()) roomId = parsed.roomId;
+                // Connection announcements may precede ROOMSTATE (and messages).
+                // Start the catalog as soon as the channel room ID is known,
+                // independently of whether the "connected" status was sent.
+                if (thirdPartyEmotes != null && shouldLoadThirdPartyEmotes(
+                        emotesRequested, roomId)) {
+                    thirdPartyEmotes.loadOnce(roomId, catalogClient);
+                    emotesRequested = true;
+                }
                 if (parsed.message != null) {
                     if (!announced) {
                         callback.onStatus("twitch", "connected", YouTubeMode.STOPPED);
                         announced = true;
                     }
-                    callback.onMessage(parsed.message);
+                    callback.onMessage(thirdPartyEmotes == null
+                            ? parsed.message : thirdPartyEmotes.augment(parsed.message));
                 }
                 if (!announced && (line.contains(" 001 ") || line.contains(" ROOMSTATE "))) {
                     callback.onStatus("twitch", "connected", YouTubeMode.STOPPED);
@@ -97,6 +145,22 @@ public final class TwitchProvider extends ChatProvider {
         } finally {
             closeSocket();
         }
+    }
+
+    static boolean shouldLoadThirdPartyEmotes(boolean requested, String channelId) {
+        // Waiting for the room ID avoids loading global emotes only and
+        // permanently missing the channel-specific catalog.
+        return !requested && channelId != null && !channelId.isEmpty();
+    }
+
+    static int heartbeatAction(long now, long lastInbound, long heartbeatSent) {
+        if (heartbeatSent > 0L)
+            return now - heartbeatSent >= HEARTBEAT_GRACE_MS ? 2 : 0;
+        return now - lastInbound >= HEARTBEAT_IDLE_MS ? 1 : 0;
+    }
+
+    private static long monotonicMs() {
+        return System.nanoTime() / 1_000_000L;
     }
 
     private synchronized void send(String line) throws IOException {
@@ -126,9 +190,23 @@ public final class TwitchProvider extends ChatProvider {
         }
         if (rest.startsWith("PING")) return ParsedLine.ping(rest.substring(4).trim());
         if (rest.contains(" RECONNECT")) return ParsedLine.reconnect();
+        if (rest.contains(" ROOMSTATE ")) {
+            String room = tags.getOrDefault("room-id", "");
+            if (!room.isEmpty()) return ParsedLine.room(room);
+        }
         if (rest.contains(" CLEARMSG ")) return ParsedLine.delete(tags.getOrDefault("target-msg-id", ""));
-        if (rest.contains(" CLEARCHAT ") && !rest.substring(rest.indexOf(" CLEARCHAT ") + 11)
-                .contains(" :")) return ParsedLine.clear();
+        if (rest.contains(" CLEARCHAT ")) {
+            String after = rest.substring(rest.indexOf(" CLEARCHAT ") + 11);
+            if (after.contains(" :")) {
+                // Ban/timeout for one user. The numeric target-user-id tag
+                // matches the authorId stored on messages; the login after
+                // the colon is only a fallback.
+                String userId = tags.getOrDefault("target-user-id", "");
+                if (userId.isEmpty()) userId = after.substring(after.indexOf(" :") + 2).trim();
+                return ParsedLine.deleteUser(userId);
+            }
+            return ParsedLine.clear();
+        }
 
         if (rest.contains(" PRIVMSG ") && rest.contains(" :")) {
             int split = rest.indexOf(" :");
@@ -155,7 +233,7 @@ public final class TwitchProvider extends ChatProvider {
                     .timestamp(timestamp)
                     .emotes(parseEmotes(tags.get("emotes"), text))
                     .build();
-            return ParsedLine.message(message);
+            return ParsedLine.message(message, tags.getOrDefault("room-id", ""));
         }
 
         if (rest.contains(" USERNOTICE ")) {
@@ -281,18 +359,25 @@ public final class TwitchProvider extends ChatProvider {
         public final ChatMessage message;
         public final String ping;
         public final String deleteId;
+        public final String deleteUserId;
+        public final String roomId;
         public final boolean clear;
         public final boolean reconnect;
-        private ParsedLine(ChatMessage message, String ping, String deleteId,
-                           boolean clear, boolean reconnect) {
+        private ParsedLine(ChatMessage message, String ping, String deleteId, String deleteUserId,
+                           String roomId, boolean clear, boolean reconnect) {
             this.message = message; this.ping = ping; this.deleteId = deleteId;
+            this.deleteUserId = deleteUserId;
+            this.roomId = roomId;
             this.clear = clear; this.reconnect = reconnect;
         }
-        static ParsedLine message(ChatMessage value) { return new ParsedLine(value, null, "", false, false); }
-        static ParsedLine ping(String value) { return new ParsedLine(null, value, "", false, false); }
-        static ParsedLine delete(String value) { return new ParsedLine(null, null, value, false, false); }
-        static ParsedLine clear() { return new ParsedLine(null, null, "", true, false); }
-        static ParsedLine reconnect() { return new ParsedLine(null, null, "", false, true); }
-        static ParsedLine other() { return new ParsedLine(null, null, "", false, false); }
+        static ParsedLine message(ChatMessage value) { return new ParsedLine(value, null, "", "", "", false, false); }
+        static ParsedLine message(ChatMessage value, String room) { return new ParsedLine(value, null, "", "", room, false, false); }
+        static ParsedLine ping(String value) { return new ParsedLine(null, value, "", "", "", false, false); }
+        static ParsedLine delete(String value) { return new ParsedLine(null, null, value, "", "", false, false); }
+        static ParsedLine deleteUser(String value) { return new ParsedLine(null, null, "", value, "", false, false); }
+        static ParsedLine room(String value) { return new ParsedLine(null, null, "", "", value, false, false); }
+        static ParsedLine clear() { return new ParsedLine(null, null, "", "", "", true, false); }
+        static ParsedLine reconnect() { return new ParsedLine(null, null, "", "", "", false, true); }
+        static ParsedLine other() { return new ParsedLine(null, null, "", "", "", false, false); }
     }
 }

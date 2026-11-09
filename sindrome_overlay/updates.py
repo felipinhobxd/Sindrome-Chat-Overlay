@@ -61,6 +61,12 @@ class UpdateDownloadResult:
     progress: int = 0
     installer_path: Path | None = None
     sha256: str = ""
+    # True once the worker thread hash-verified the downloaded bytes against
+    # the release manifest in constant time, immediately before publishing
+    # this result. UI code must not re-hash the file on the GUI thread.
+    verified: bool = False
+    file_size: int = 0
+    file_mtime_ns: int = 0
     error_code: str = ""
     error: str = ""
 
@@ -76,7 +82,8 @@ def version_tuple(value: str) -> tuple[int, int, int] | None:
     match = _VERSION_RE.fullmatch(value.strip())
     if not match:
         return None
-    return tuple(int(part) for part in match.groups())
+    major, minor, patch = (int(part) for part in match.groups())
+    return (major, minor, patch)
 
 
 def update_from_release(payload: Any, current_version: str) -> UpdateInfo | None:
@@ -354,6 +361,7 @@ class UpdateDownloader(threading.Thread):
             final_path = self.download_dir / self.update.installer_name
             os.replace(partial_path, final_path)
             self._partial_path = None
+            final_stat = final_path.stat()
             self.results.put(
                 UpdateDownloadResult(
                     status="ready",
@@ -361,6 +369,9 @@ class UpdateDownloader(threading.Thread):
                     progress=100,
                     installer_path=final_path,
                     sha256=expected_hash,
+                    verified=True,
+                    file_size=final_stat.st_size,
+                    file_mtime_ns=final_stat.st_mtime_ns,
                 )
             )
         except _UpdateFailure as exc:

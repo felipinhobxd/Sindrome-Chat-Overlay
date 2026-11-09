@@ -5,7 +5,7 @@ from typing import Literal
 
 from .models import ChatMessage
 
-EventKind = Literal["message", "status", "delete", "clear"]
+EventKind = Literal["message", "status", "delete", "delete_author", "clear"]
 
 
 @dataclass(slots=True, frozen=True)
@@ -15,5 +15,6 @@ class ProviderEvent:
     message: ChatMessage | None = None
     text: str = ""
     message_id: str = ""
+    author_id: str = ""
     state: str = ""
     mode: str = ""
