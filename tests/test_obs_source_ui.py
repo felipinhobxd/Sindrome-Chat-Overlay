@@ -109,7 +109,7 @@ class ObsSourceUiTests(unittest.TestCase):
                     window.events, "https://youtu.be/abcdefghijk", "fake-key"
                 )
                 raw = (
-                    "@room-id=444;display-name=Ana;user-id=55;id=tw-one "
+                    "@room-id=444;display-name=Ana;user-id=55;emotes=25:3-7;id=tw-one "
                     ":ana!ana@ana.tmi.twitch.tv PRIVMSG #sindromegames :Oi Kappa"
                 )
                 kind, twitch_message = parse_twitch_line(raw)
