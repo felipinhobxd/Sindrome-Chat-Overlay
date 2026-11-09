@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from datetime import UTC, datetime
 
 from sindrome_overlay.providers.twitch import (
     parse_irc_tags,
@@ -20,6 +21,47 @@ class TwitchParserTests(unittest.TestCase):
         tags = parse_irc_tags(r"display-name=Sindrome\sGames;system-msg=Ola\smundo\:")
         self.assertEqual(tags["display-name"], "Sindrome Games")
         self.assertEqual(tags["system-msg"], "Ola mundo;")
+
+    def test_irc_tag_escapes_are_not_decoded_twice(self) -> None:
+        # IRCv3 escaping is single-pass. A literal backslash followed by "s"
+        # is not a space; a literal backslash followed by "n" is not a newline.
+        tags = parse_irc_tags(
+            r"display-name=Viewer\\sLiteral;system-msg=Line\\nHere\sOK\:\\"
+        )
+        self.assertEqual(tags["display-name"], r"Viewer\sLiteral")
+        self.assertEqual(tags["system-msg"], "Line\\nHere OK;\\")
+
+        kind, event = parse_twitch_line(
+            r"@display-name=Viewer\\sLiteral;system-msg=Line\\nHere\sOK\:\\ "
+            ":tmi.twitch.tv USERNOTICE #sindromegames"
+        )
+        self.assertEqual(kind, "message")
+        self.assertIsNotNone(event)
+        self.assertEqual(event.author, r"Viewer\sLiteral")
+        self.assertEqual(event.text, "Line\\nHere OK;\\")
+
+    def test_irc_tag_escape_sequences_and_unknown_codes(self) -> None:
+        tags = parse_irc_tags(r"a=hello\sworld\:;b=first\nsecond\rthird;c=slash\\end;d=unknown\q;end=trailing\")
+        self.assertEqual(tags["a"], "hello world;")
+        self.assertEqual(tags["b"], "first\nsecond\rthird")
+        self.assertEqual(tags["c"], "slash\\end")
+        self.assertEqual(tags["d"], r"unknown\q")
+        self.assertEqual(tags["end"], "trailing\\")
+
+    def test_invalid_twitch_timestamp_does_not_drop_message(self) -> None:
+        # Malformed/huge remote timestamps must not crash the provider's IRC loop.
+        for timestamp in ("9999999999999999999999999999999", "9" * 5000, "invalid"):
+            with self.subTest(timestamp=timestamp[:40]):
+                kind, message = parse_twitch_line(
+                    f"@tmi-sent-ts={timestamp};id=still-delivered;display-name=Viewer "
+                    ":viewer!viewer@viewer.tmi.twitch.tv "
+                    "PRIVMSG #sindromegames :Ola chat"
+                )
+                self.assertEqual(kind, "message")
+                self.assertIsNotNone(message)
+                self.assertEqual(message.message_id, "still-delivered")
+                self.assertEqual(message.text, "Ola chat")
+                self.assertLess(abs((message.timestamp - datetime.now(UTC)).total_seconds()), 5)
 
     def test_privmsg(self) -> None:
         line = (
