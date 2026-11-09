@@ -41,7 +41,10 @@ class TwitchParserTests(unittest.TestCase):
         self.assertEqual(event.text, "Line\\nHere OK;\\")
 
     def test_irc_tag_escape_sequences_and_unknown_codes(self) -> None:
-        tags = parse_irc_tags(r"a=hello\sworld\:;b=first\nsecond\rthird;c=slash\\end;d=unknown\q;end=trailing\")
+        tags = parse_irc_tags(
+            r"a=hello\sworld\:;b=first\nsecond\rthird;c=slash\\end;d=unknown\q;end=trailing"
+            + "\\"
+        )
         self.assertEqual(tags["a"], "hello world;")
         self.assertEqual(tags["b"], "first\nsecond\rthird")
         self.assertEqual(tags["c"], "slash\\end")
