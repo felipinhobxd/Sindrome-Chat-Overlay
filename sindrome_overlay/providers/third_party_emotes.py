@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import Any
 
 import requests
@@ -192,31 +192,42 @@ class ThirdPartyEmoteResolver:
             self._codes.clear()
 
     def load(self, channel_id: str) -> None:
+        """Refresh each provider independently; retain previous data on total failure."""
         if self._stopped.is_set():
             return
+        catalogs: list[tuple[str, Callable[[Any], dict[str, str]]]] = [
+            (_BTTV_GLOBAL_URL, parse_bttv_payload),
+            (_SEVENTV_GLOBAL_URL, parse_seventv_payload),
+            (_FFZ_GLOBAL_URL, parse_ffz_payload),
+        ]
+        if channel_id.isdigit():
+            catalogs.extend([
+                (_BTTV_CHANNEL_URL.format(channel_id=channel_id), parse_bttv_payload),
+                (_SEVENTV_CHANNEL_URL.format(channel_id=channel_id), parse_seventv_payload),
+                (_FFZ_ROOM_URL.format(channel_id=channel_id), parse_ffz_payload),
+            ])
+
         codes: dict[str, str] = {}
-        try:
-            payload = _fetch_json(_BTTV_GLOBAL_URL)
-            if payload is not None:
-                codes.update(parse_bttv_payload(payload))
-            payload = _fetch_json(_SEVENTV_GLOBAL_URL)
-            if payload is not None:
-                codes.update(parse_seventv_payload(payload))
-            payload = _fetch_json(_FFZ_GLOBAL_URL)
-            if payload is not None:
-                codes.update(parse_ffz_payload(payload))
-            if channel_id.isdigit():
-                payload = _fetch_json(_BTTV_CHANNEL_URL.format(channel_id=channel_id))
-                if payload is not None:
-                    codes.update(parse_bttv_payload(payload))
-                payload = _fetch_json(_SEVENTV_CHANNEL_URL.format(channel_id=channel_id))
-                if payload is not None:
-                    codes.update(parse_seventv_payload(payload))
-                payload = _fetch_json(_FFZ_ROOM_URL.format(channel_id=channel_id))
-                if payload is not None:
-                    codes.update(parse_ffz_payload(payload))
-        except requests.RequestException as exc:
-            self.log.debug("Third-party emote fetch failed: %s", exc)
+        loaded_any = False
+        for url, parser in catalogs:
+            if self._stopped.is_set():
+                return
+            try:
+                payload = _fetch_json(url)
+                if payload is None:
+                    continue
+                parsed = parser(payload)
+            except (requests.RequestException, TypeError, ValueError, AttributeError) as exc:
+                # An outage or malformed response from one service must not
+                # prevent healthy catalogs from loading on the same reconnect.
+                self.log.debug("Third-party emote catalog failed (%s): %s", url, exc)
+                continue
+            codes.update(parsed)
+            loaded_any = True
+
+        # No usable response this time: never blank a working catalog merely
+        # because every third-party endpoint temporarily failed.
+        if not loaded_any:
             return
         codes = {
             code: url
@@ -224,6 +235,8 @@ class ThirdPartyEmoteResolver:
             if code and len(code) <= _MAX_CODE_LENGTH and url.startswith("https://")
         }
         with self._lock:
+            if self._stopped.is_set():
+                return
             self._codes = codes
         if codes:
             self.log.info("Loaded %d third-party emotes.", len(codes))
