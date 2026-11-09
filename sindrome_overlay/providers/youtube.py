@@ -975,7 +975,11 @@ class YouTubeProvider(BaseProvider):
                 raise ChatUnavailable("The official live chat was closed.")
             try:
                 interval_ms = int(payload.get("pollingIntervalMillis") or 5_000)
-                interval = min(interval_ms, _MAX_CHAT_POLL_INTERVAL_MS) / 1000 if interval_ms > 0 else 5.0
+                interval = (
+                    min(interval_ms, _MAX_CHAT_POLL_INTERVAL_MS) / 1000
+                    if interval_ms > 0
+                    else 5.0
+                )
             except (TypeError, ValueError, OverflowError):
                 interval = 5.0
             if self.wait(interval):
