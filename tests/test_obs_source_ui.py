@@ -60,6 +60,129 @@ class ObsSourceUiTests(unittest.TestCase):
         self.assertEqual(saved.obs_message_background_opacity, 45)
         dialog.close()
 
+    def test_mixed_provider_events_reach_real_obs_http_and_moderation(self) -> None:
+        import json
+        from unittest.mock import patch
+        from urllib.request import urlopen
+
+        from PySide6.QtWidgets import QApplication
+
+        from sindrome_overlay.events import ProviderEvent
+        from sindrome_overlay.models import ChatMessage
+        from sindrome_overlay.obs_source import ObsChatSourceServer
+        from sindrome_overlay.provider_event_queue import ProviderEventQueue
+        from sindrome_overlay.providers.twitch import TwitchProvider, parse_twitch_line
+        from sindrome_overlay.providers.youtube import YouTubeProvider, official_message_from_stream
+        from sindrome_overlay.settings import Settings, SettingsStore
+        from sindrome_overlay.ui.virtualized_overlay import OverlayWindow
+        from sindrome_overlay.youtube_grpc import stream_list_pb2
+
+        app = QApplication.instance() or QApplication([])
+        port = _free_local_port()
+        settings = Settings(
+            twitch_enabled=False,
+            youtube_enabled=False,
+            sound_enabled=False,
+            check_for_updates=False,
+            obs_enabled=True,
+            obs_port=port,
+            obs_max_messages=30,
+        )
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            ObsChatSourceServer, "_load_badge_images_async"
+        ):
+            window = OverlayWindow(
+                settings,
+                SettingsStore(Path(directory) / "settings.json"),
+                logging.getLogger("chat-to-obs-integration"),
+            )
+            try:
+                window.show()
+                app.processEvents()
+                self.assertTrue(window.obs_source.running)
+                self.assertIsInstance(window.events, ProviderEventQueue)
+
+                twitch = TwitchProvider(
+                    window.events, "sindromegames", third_party_emotes=False
+                )
+                youtube = YouTubeProvider(
+                    window.events, "https://youtu.be/abcdefghijk", "fake-key"
+                )
+                raw = (
+                    "@room-id=444;display-name=Ana;user-id=55;emotes=25:3-7;id=tw-one "
+                    ":ana!ana@ana.tmi.twitch.tv PRIVMSG #sindromegames :Oi Kappa"
+                )
+                kind, twitch_message = parse_twitch_line(raw)
+                self.assertEqual(kind, "message")
+                self.assertIsInstance(twitch_message, ChatMessage)
+                twitch.emit_message(twitch_message)
+
+                item = stream_list_pb2.LiveChatMessage(id="yt-one")
+                item.snippet.type = stream_list_pb2.LiveChatMessageSnippet.TEXT_MESSAGE_EVENT
+                item.snippet.text_message_details.message_text = "Olá YouTube 😀"
+                item.author_details.display_name = "Visitante"
+                youtube_message = official_message_from_stream(item, "pt-BR")
+                self.assertIsNotNone(youtube_message)
+                youtube._emit_once(youtube_message)
+                youtube._emit_once(youtube_message)  # Replay after reconnect.
+
+                window._drain_events()
+                api_url = window.obs_source.url.replace(
+                    "/obs-chat", "/api/state?revision=-1"
+                )
+
+                def read_messages() -> list[dict]:
+                    with urlopen(api_url, timeout=3) as response:  # noqa: S310
+                        self.assertEqual(response.status, 200)
+                        return json.loads(response.read().decode("utf-8"))["messages"]
+
+                messages = read_messages()
+                self.assertEqual(
+                    [m["message_id"] for m in messages], ["tw-one", "yt-one"]
+                )
+                self.assertEqual(messages[0]["segments"][1]["type"], "emote")
+                self.assertEqual(messages[1]["segments"][0]["text"], "Olá YouTube 😀")
+
+                twitch.emit_delete("tw-one")
+                window._drain_events()
+                self.assertEqual(
+                    [m["message_id"] for m in read_messages()], ["yt-one"]
+                )
+
+                twitch.emit_message(
+                    ChatMessage(
+                        "twitch", "Ana", "second", author_id="55", message_id="tw-two"
+                    )
+                )
+                window._drain_events()
+                twitch.emit_delete_author("55")
+                window._drain_events()
+                self.assertEqual(
+                    [m["message_id"] for m in read_messages()], ["yt-one"]
+                )
+
+                twitch.emit_clear()
+                window._drain_events()
+                self.assertEqual(
+                    [m["message_id"] for m in read_messages()], ["yt-one"]
+                )
+
+                old_queue = window.events
+                window._restart_providers()
+                self.assertFalse(
+                    old_queue.offer(
+                        # Old provider events must not re-enter a new connection.
+                        ProviderEvent(kind="clear", platform="youtube")
+                    )
+                )
+                window._drain_events()
+                self.assertEqual(
+                    [m["message_id"] for m in read_messages()], ["yt-one"]
+                )
+            finally:
+                window.close()
+                app.processEvents()
+
     def test_overlay_feeds_obs_history_independently_from_desktop_expiry(self) -> None:
         from PySide6.QtWidgets import QApplication
 

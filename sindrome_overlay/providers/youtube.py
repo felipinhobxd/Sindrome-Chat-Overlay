@@ -825,6 +825,18 @@ class YouTubeProvider(BaseProvider):
             raise ChatDisabled("The live stream does not have an active chat.")
         return str(live_chat_id)
 
+    def _open_stream_channel(self) -> Any:
+        """Creates the production TLS channel (overridden by local integration tests)."""
+        return grpc.secure_channel(
+            "dns:///youtube.googleapis.com:443",
+            grpc.ssl_channel_credentials(),
+            options=(
+                ("grpc.keepalive_time_ms", 60_000),
+                ("grpc.keepalive_timeout_ms", 10_000),
+                ("grpc.http2.max_pings_without_data", 0),
+            ),
+        )
+
     def _run_official_stream(self, video_id: str, live_chat_id: str) -> None:
         failures = 0
         invalid_token_retried = False
@@ -837,15 +849,7 @@ class YouTubeProvider(BaseProvider):
             grpc.StatusCode.UNAVAILABLE,
         }
         while not self.stop_event.is_set():
-            channel = grpc.secure_channel(
-                "dns:///youtube.googleapis.com:443",
-                grpc.ssl_channel_credentials(),
-                options=(
-                    ("grpc.keepalive_time_ms", 60_000),
-                    ("grpc.keepalive_timeout_ms", 10_000),
-                    ("grpc.http2.max_pings_without_data", 0),
-                ),
-            )
+            channel = self._open_stream_channel()
             self._grpc_channel = channel
             try:
                 try:
