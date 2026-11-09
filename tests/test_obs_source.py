@@ -9,6 +9,12 @@ from urllib.request import Request, urlopen
 
 from sindrome_overlay.models import ChatEmote, ChatMessage
 from sindrome_overlay.obs_source import ObsChatSourceServer, ObsSourceConfig, message_payload
+from sindrome_overlay.providers.third_party_emotes import (
+    ThirdPartyEmoteResolver,
+    parse_bttv_payload,
+    parse_ffz_payload,
+    parse_seventv_payload,
+)
 
 
 class ObsSourcePayloadTests(unittest.TestCase):
@@ -43,6 +49,55 @@ class ObsSourcePayloadTests(unittest.TestCase):
         youtube_payload = message_payload(youtube)
         self.assertEqual(youtube_payload["segments"][1]["type"], "emote")
         self.assertTrue(youtube_payload["segments"][1]["url"].startswith("https://yt3.ggpht.com/"))
+
+    def test_real_third_party_catalogs_render_correct_obs_urls(self) -> None:
+        """Twitch native and all three third-party catalogs coexist in OBS."""
+        bttv = parse_bttv_payload([{"id": "bttv-id", "code": "Nice"}])
+        seventv = parse_seventv_payload(
+            {"emotes": [{"id": "seventv-id", "name": "Sadge"}]}
+        )
+        ffz = parse_ffz_payload({
+            "default_sets": [1],
+            "sets": {"1": {"emoticons": [
+                {"name": "Pog", "urls": {"2": "//cdn.frankerfacez.com/emote/ffz-id/2"}}
+            ]}},
+        })
+        resolver = ThirdPartyEmoteResolver()
+        resolver._codes = {**bttv, **seventv, **ffz}
+        message = ChatMessage(
+            "twitch", "viewer", "Kappa Nice Sadge Pog",
+            emotes=(ChatEmote("25", 0, 5, "Kappa"),),
+        )
+        segments = message_payload(resolver.augment(message))["segments"]
+        image_urls = [segment["url"] for segment in segments if segment["type"] == "emote"]
+        self.assertEqual(image_urls, [
+            "https://static-cdn.jtvnw.net/emoticons/v2/25/static/dark/3.0",
+            "https://cdn.betterttv.net/emote/bttv-id/2x",
+            "https://cdn.7tv.app/emote/seventv-id/2x.webp",
+            "https://cdn.frankerfacez.com/emote/ffz-id/2",
+        ])
+
+    def test_untrusted_twitch_third_party_urls_fall_back_to_text(self) -> None:
+        unsafe_urls = (
+            "http://cdn.betterttv.net/emote/a/2x",
+            "https://cdn.betterttv.net.evil.example/emote/a/2x",
+            "https://cdn.7tv.app@evil.example/emote/a/2x",
+            "https://evil.example@cdn.7tv.app/emote/a/2x",
+            "https://cdn.frankerfacez.com:444/emote/a/2",
+            "https://cdn.betterttv.net:invalid/emote/a/2x",
+            "https://cdn.frankerfacez.com/emote/a/2#redirect",
+            "file:///home/user/emote.png",
+        )
+        for url in unsafe_urls:
+            with self.subTest(url=url):
+                message = ChatMessage(
+                    "twitch", "viewer", "Nice",
+                    emotes=(ChatEmote("Nice", 0, 4, "Nice", url),),
+                )
+                self.assertEqual(
+                    message_payload(message)["segments"],
+                    [{"type": "text", "text": "Nice"}],
+                )
 
     def test_untrusted_youtube_emote_url_falls_back_to_text(self) -> None:
         message = ChatMessage(
@@ -113,6 +168,15 @@ class ObsSourceServerTests(unittest.TestCase):
         with urlopen(unchanged, timeout=3) as response:  # noqa: S310 - localhost test
             self.assertEqual(response.status, 204)
             self.assertEqual(response.read(), b"")
+
+    def test_browser_source_csp_allows_only_known_twitch_emote_cdns(self) -> None:
+        with urlopen(self.server.url, timeout=3) as response:  # noqa: S310
+            csp = response.headers["Content-Security-Policy"]
+        self.assertIn("https://static-cdn.jtvnw.net", csp)
+        self.assertIn("https://cdn.betterttv.net", csp)
+        self.assertIn("https://cdn.7tv.app", csp)
+        self.assertIn("https://cdn.frankerfacez.com", csp)
+        self.assertNotIn("img-src *", csp)
 
     def test_browser_uses_platform_scoped_incremental_rendering(self) -> None:
         # Guard against reintroducing the O(n²) snapshot scan or moving

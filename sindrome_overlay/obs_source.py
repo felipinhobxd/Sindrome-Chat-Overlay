@@ -316,22 +316,54 @@ def _message_segments(message: ChatMessage) -> list[dict[str, str]]:
     return segments or [{"type": "text", "text": message.text}]
 
 
+_TWITCH_THIRD_PARTY_CDNS = frozenset({
+    "cdn.betterttv.net",
+    "cdn.7tv.app",
+    "cdn.frankerfacez.com",
+})
+
+
+def _trusted_emote_image_url(platform: str, image_url: str) -> str:
+    """Allow only image CDNs known to the respective chat provider."""
+    try:
+        parsed = urlsplit(image_url)
+        host = (parsed.hostname or "").lower()
+        port = parsed.port
+    except ValueError:
+        return ""
+
+    if (
+        parsed.scheme != "https"
+        or port is not None
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.fragment
+    ):
+        return ""
+
+    if platform == "twitch":
+        return image_url if host in _TWITCH_THIRD_PARTY_CDNS else ""
+    if platform == "youtube":
+        if host == "yt3.ggpht.com" or host.endswith(".ggpht.com"):
+            return image_url
+        if host == "googleusercontent.com" or host.endswith(".googleusercontent.com"):
+            return image_url
+    return ""
+
+
 def _emote_url(platform: str, emote: ChatEmote) -> str:
-    if platform.casefold() == "twitch":
+    platform = platform.casefold()
+    if platform == "twitch":
+        if emote.image_url:
+            # BTTV/7TV/FFZ provide a third-party CDN URL; treating the code as
+            # a native Twitch ID yields broken images in OBS Browser Source.
+            return _trusted_emote_image_url(platform, emote.image_url)
         try:
             return twitch_emote_url(emote.emote_id)
         except ValueError:
             return ""
-    if platform.casefold() != "youtube" or not emote.image_url:
-        return ""
-    parsed = urlsplit(emote.image_url)
-    host = (parsed.hostname or "").lower()
-    if parsed.scheme != "https":
-        return ""
-    if host == "yt3.ggpht.com" or host.endswith(".ggpht.com"):
-        return emote.image_url
-    if host == "googleusercontent.com" or host.endswith(".googleusercontent.com"):
-        return emote.image_url
+    if platform == "youtube" and emote.image_url:
+        return _trusted_emote_image_url(platform, emote.image_url)
     return ""
 
 
@@ -392,7 +424,8 @@ class _ObsRequestHandler(BaseHTTPRequestHandler):
         self.send_header(
             "Content-Security-Policy",
             "default-src 'none'; connect-src 'self'; "
-            "img-src https://static-cdn.jtvnw.net https://*.ggpht.com "
+            "img-src https://static-cdn.jtvnw.net https://cdn.betterttv.net "
+            "https://cdn.7tv.app https://cdn.frankerfacez.com https://*.ggpht.com "
             "https://*.googleusercontent.com data:; "
             "style-src 'unsafe-inline'; script-src 'unsafe-inline'",
         )
