@@ -414,15 +414,15 @@ class OverlayWindow(OverlayShell):
         if self.settings.auto_scroll:
             self.message_view.verticalScrollBar().setValue(maximum)
 
-    def _remove_message_id(self, message_id: str) -> None:
-        self.obs_source.remove_message(message_id)
-        super()._remove_message_id(message_id)
+    def _remove_message_id(self, message_id: str, platform: str = "") -> None:
+        self.obs_source.remove_message(message_id, platform)
+        super()._remove_message_id(message_id, platform)
 
-    def _remove_author_id(self, author_id: str) -> None:
-        # Ban/timeout: drop the banned account's history here and in the OBS
-        # browser source.
-        self.obs_source.remove_by_author(author_id)
-        super()._remove_author_id(author_id)
+    def _remove_author_id(self, author_id: str, platform: str = "") -> None:
+        # Keep Twitch moderation scoped to Twitch in both display surfaces:
+        # the numeric YouTube channel ID may coincidentally match.
+        self.obs_source.remove_by_author(author_id, platform)
+        super()._remove_author_id(author_id, platform)
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self._automatic_timer.stop()
