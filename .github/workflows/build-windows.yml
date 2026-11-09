@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   test-windows:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     permissions:
       contents: read
@@ -83,6 +83,21 @@ jobs:
           if (-not (Test-Path $setup)) {
             throw "Installer was not produced at $setup"
           }
+
+      # Test builds are downloadable without creating or overwriting a public
+      # release tag. They are not signed release artifacts.
+      - name: Upload tested Windows preview installers
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: SindromeChatOverlay-Windows-preview-v${{ env.VERSION }}-${{ github.sha }}
+          path: |
+            release/SindromeChatOverlay-Setup-v${{ env.VERSION }}.exe
+            dist/SindromeChatOverlay.exe
+            dist/README.md
+            dist/THIRD_PARTY_NOTICES.md
+            dist/LICENSE.txt
+          if-no-files-found: error
+          retention-days: 30
 
   release-gate:
     if: github.event_name != 'pull_request'
