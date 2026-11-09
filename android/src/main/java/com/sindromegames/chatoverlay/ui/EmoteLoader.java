@@ -8,6 +8,7 @@ import android.os.Looper;
 import android.util.LruCache;
 
 import com.sindromegames.chatoverlay.model.ChatEmote;
+import com.sindromegames.chatoverlay.net.BoundedStreams;
 import com.sindromegames.chatoverlay.net.NetClient;
 
 import java.io.File;
@@ -109,16 +110,15 @@ public final class EmoteLoader {
             if (bitmap == null) {
                 try (Response response = http.newCall(new Request.Builder().url(url).build()).execute()) {
                     if (response.isSuccessful() && response.body() != null) {
-                        long length = response.body().contentLength();
-                        if (length < 0 || length <= MAX_IMAGE_BYTES) {
-                            byte[] data = response.body().bytes();
-                            if (data.length <= MAX_IMAGE_BYTES) {
-                                bitmap = decodeSafely(data);
-                                if (bitmap != null) {
-                                    try (FileOutputStream output = new FileOutputStream(file)) {
-                                        output.write(data);
-                                    }
-                                }
+                        // Do not call ResponseBody.bytes(): unknown/chunked lengths
+                        // otherwise allocate the complete untrusted payload in memory.
+                        byte[] data = BoundedStreams.readBytes(
+                                response.body().byteStream(),
+                                response.body().contentLength(), (int) MAX_IMAGE_BYTES);
+                        bitmap = decodeSafely(data);
+                        if (bitmap != null) {
+                            try (FileOutputStream output = new FileOutputStream(file)) {
+                                output.write(data);
                             }
                         }
                     }
