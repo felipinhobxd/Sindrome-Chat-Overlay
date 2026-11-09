@@ -183,6 +183,23 @@ class YouTubeParserTests(unittest.TestCase):
         self.assertEqual(messages[0].text, "Boa live!")
         self.assertEqual(messages[0].badges, ("MODERATOR",))
 
+    def test_innertube_message_survives_overflowing_timestamp(self) -> None:
+        actions = [{
+            "addChatItemAction": {
+                "item": {"liveChatTextMessageRenderer": {
+                    "id": "yt-overflow",
+                    "timestampUsec": "9" * 400,
+                    "authorName": {"simpleText": "Viewer"},
+                    "message": {"runs": [{"text": "Ainda no chat"}]},
+                }}
+            }
+        }]
+        messages, deletions = youtube_messages_from_actions(actions)
+        self.assertEqual(deletions, [])
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(messages[0].message_id, "yt-overflow")
+        self.assertEqual(messages[0].text, "Ainda no chat")
+
     def test_innertube_custom_emote_preserves_image_and_span(self) -> None:
         actions = [
             {
