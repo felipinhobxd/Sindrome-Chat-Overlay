@@ -114,6 +114,19 @@ class ObsSourceServerTests(unittest.TestCase):
             self.assertEqual(response.status, 204)
             self.assertEqual(response.read(), b"")
 
+    def test_browser_uses_platform_scoped_incremental_rendering(self) -> None:
+        # Guard against reintroducing the O(n²) snapshot scan or moving
+        # every DOM card on each new message. Browser interaction is checked
+        # separately through the manual OBS QA checklist.
+        with urlopen(self.server.url, timeout=3) as response:  # noqa: S310
+            html = response.read().decode("utf-8")
+        self.assertIn("const seenIds = new Set();", html)
+        self.assertIn("JSON.stringify([String(message.platform || ''), id])", html)
+        self.assertIn("if (!seenIds.has(id))", html)
+        self.assertIn("chat.insertBefore(node, chat.children[index] || null)", html)
+        self.assertNotIn("ids.includes(id)", html)
+        self.assertNotIn("chat.lastElementChild !== node", html)
+
     def test_provider_delete_and_clear_are_reflected(self) -> None:
         self.server.publish_message(
             ChatMessage("twitch", "one", "first", message_id="one")
