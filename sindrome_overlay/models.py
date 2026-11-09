@@ -186,5 +186,6 @@ def text_from_runs(runs: Iterable[Any]) -> str:
 def parse_timestamp_usec(value: Any) -> datetime:
     try:
         return datetime.fromtimestamp(int(value) / 1_000_000, UTC)
-    except (TypeError, ValueError, OSError):
+    except (TypeError, ValueError, OverflowError, OSError):
+        # Untrusted microseconds may exceed both float and datetime limits.
         return datetime.now(UTC)
