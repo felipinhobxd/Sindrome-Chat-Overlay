@@ -71,29 +71,31 @@ public final class TwitchProvider extends ChatProvider {
         callback.onStatus("twitch", "connecting", YouTubeMode.STOPPED);
         SSLSocket current = (SSLSocket) SSLSocketFactory.getDefault()
                 .createSocket("irc.chat.twitch.tv", 6697);
-        current.setSoTimeout(1000);
-        // SSLSocket does not verify the peer hostname by default (unlike
-        // HttpsURLConnection). Without this, a MITM with a valid certificate
-        // issued for any other domain would be accepted.
-        SSLParameters sslParameters = current.getSSLParameters();
-        sslParameters.setEndpointIdentificationAlgorithm("HTTPS");
-        current.setSSLParameters(sslParameters);
-        current.startHandshake();
+        // Register the socket before TLS negotiation so stop() and finally
+        // can close it even when handshake or stream setup throws.
         socket = current;
-        writer = new BufferedWriter(new OutputStreamWriter(current.getOutputStream(),
-                StandardCharsets.UTF_8));
-        BufferedReader reader = new BufferedReader(new InputStreamReader(current.getInputStream(),
-                StandardCharsets.UTF_8));
-        send("CAP REQ :twitch.tv/tags twitch.tv/commands");
-        send("PASS SCHMOOPIIE");
-        send("NICK justinfan" + (10_000 + new Random().nextInt(90_000)));
-        send("JOIN #" + channel);
-        boolean announced = false;
-        boolean emotesRequested = false;
-        String roomId = "";
-        long lastInbound = monotonicMs();
-        long heartbeatSent = 0L;
         try {
+            current.setSoTimeout(1000);
+            // SSLSocket does not verify the peer hostname by default (unlike
+            // HttpsURLConnection). Without this, a MITM with a valid certificate
+            // issued for any other domain would be accepted.
+            SSLParameters sslParameters = current.getSSLParameters();
+            sslParameters.setEndpointIdentificationAlgorithm("HTTPS");
+            current.setSSLParameters(sslParameters);
+            current.startHandshake();
+            writer = new BufferedWriter(new OutputStreamWriter(current.getOutputStream(),
+                    StandardCharsets.UTF_8));
+            BufferedReader reader = new BufferedReader(new InputStreamReader(current.getInputStream(),
+                    StandardCharsets.UTF_8));
+            send("CAP REQ :twitch.tv/tags twitch.tv/commands");
+            send("PASS SCHMOOPIIE");
+            send("NICK justinfan" + (10_000 + new Random().nextInt(90_000)));
+            send("JOIN #" + channel);
+            boolean announced = false;
+            boolean emotesRequested = false;
+            String roomId = "";
+            long lastInbound = monotonicMs();
+            long heartbeatSent = 0L;
             while (!stopped.get()) {
                 String line;
                 try {
