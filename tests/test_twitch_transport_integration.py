@@ -118,7 +118,7 @@ class TwitchTransportIntegrationTests(unittest.TestCase):
         events: queue.Queue = queue.Queue()
         provider = TwitchProvider(events, "sindromegames", third_party_emotes=True)
         assert provider._third_party is not None
-        greeting = "@room-id=123 :tmi.twitch.tv ROOMSTATE #sindromegames\\r\\n"
+        greeting = "@room-id=123 :tmi.twitch.tv ROOMSTATE #sindromegames\r\n"
         with patch.object(provider._third_party, "load") as load:
             self._listen_script(provider, FakeTLSSocket(greeting))
             first_thread = provider._emote_loader_thread
@@ -148,7 +148,7 @@ class TwitchTransportIntegrationTests(unittest.TestCase):
                 first_started.set()
                 release_first.wait(timeout=5)
 
-        greeting = "@room-id=456 :tmi.twitch.tv ROOMSTATE #sindromegames\\r\\n"
+        greeting = "@room-id=456 :tmi.twitch.tv ROOMSTATE #sindromegames\r\n"
         with patch.object(provider._third_party, "load", side_effect=slow_first_load):
             try:
                 self._listen_script(provider, FakeTLSSocket(greeting))
