@@ -165,6 +165,10 @@ The project does not currently sign its executables, so Windows may display **Un
 
 If Windows reports that the global shortcut is unavailable, another program has already registered `Ctrl + Shift + O`. Close or reconfigure that program. Until the conflict is removed, the app provides a focused-window fallback and shows a tray warning.
 
+## Manual live-stream QA
+
+Before declaring a release validated on real platforms, use the [Portuguese live QA runbook](docs/QA-MANUAL-PT-BR.md) to test Twitch, YouTube, OBS Browser Source and Android against the **exact commit** being released. Automated CI runs local and simulated integration tests; it does **not** prove connectivity to a live channel or correct rendering on a physical device. Record outcomes in [issue #75](https://github.com/felipinhobxd/Sindrome-Chat-Overlay/issues/75).
+
 ## Run from source
 
 Install [64-bit Python 3.12](https://www.python.org/downloads/windows/) and enable **Add Python to PATH**, then double-click `RUN_APP.bat`.
