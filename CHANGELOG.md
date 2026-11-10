@@ -8,6 +8,43 @@ and add the section **before** publishing the version bump.
 
 ## [Unreleased]
 
+## [1.9.3] - 2026-11-09
+
+### Windows and OBS
+
+- Improved Twitch connection recovery with an idle heartbeat, bounded IRC
+  receive buffer and incremental UTF-8 decoding (including split emojis).
+- Corrected IRCv3 tag escaping and ignored invalid remote timestamps instead
+  of interrupting live chat.
+- Reload BTTV, 7TV and FFZ emotes after Twitch reconnects, isolate third-party
+  catalog failures and retain the last usable catalog during outages.
+- Fixed BTTV, 7TV and FFZ image rendering in OBS Browser Source using an
+  explicit HTTPS CDN allowlist; protected moderation against cross-platform
+  message ID collisions and improved OBS rendering performance.
+- Added downloadable Windows preview installers in GitHub Actions without
+  replacing an official release.
+
+### YouTube and moderation
+
+- Prevented malformed timestamps and excessive server polling intervals from
+  disrupting or stalling YouTube chat updates.
+- Apply YouTube author-wide moderation events to the Windows overlay and OBS
+  source, without deleting unrelated Twitch or YouTube messages.
+
+### Android
+
+- Improved third-party emote catalog refresh after reconnects and retained
+  the previous catalog during temporary service failures.
+- Updated Android versionCode and versionName for the signed release.
+
+### Verification
+
+- Expanded regression tests for chat transports, moderation, emotes, OBS,
+  malformed metadata and provider reconnects.
+- Windows tests, Android build and emulator tests, dependency audits and
+  type checks run in CI. Manual verification during real Twitch/YouTube live
+  streams, OBS Studio and a physical Android device is still pending in #75.
+
 
 ## [1.9.2] - 2026-09-08
 
